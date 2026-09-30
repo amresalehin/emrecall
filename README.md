@@ -9,7 +9,7 @@ Lightweight, local-first Android screen recall.
 - Stores screenshots as WebP in app-private external storage.
 - Stores capture metadata in local SQLite.
 - Searches by package name and OCR text.
-- Runs OCR only when manually requested.
+- Runs OCR only when manually requested. OCR uses the thin Google Play-services delivery to keep the APK small; the OCR model may need to download before first use.
 - Supports 5/7/10/15/20 second capture intervals.
 - Supports 7/30/90 day retention.
 - Lets the user exclude sensitive app package names.
