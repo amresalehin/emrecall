@@ -191,7 +191,7 @@ class MainActivity : Activity() {
         }
         search = EditText(this).apply {
             hint = "package name or OCR text"
-            singleLine = true
+            setSingleLine(true)
         }
         searchRow.addView(
             search,
