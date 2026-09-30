@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">SnapMemory Lite</string>
+    <string name="service_desc">Captures user-selected screen activity for local personal recall. User-controlled and local-only.</string>
+</resources>
