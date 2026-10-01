@@ -40,14 +40,9 @@ jobs:
           test -x "$apksigner_path"
           "$apksigner_path" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
-          expected="$(keytool -list -v -keystore debug.keystore -storepass emrecall-ci-password -alias emrecall-ci |
-            awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          actual="$("$apksigner_path" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk |
-            awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $3; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-
-          test -n "$expected"
-          test -n "$actual"
-          test "$expected" = "$actual"
+          certs="$("$apksigner_path" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk)"
+          printf '%s\n' "$certs" | grep -Fq "Signer: certificate SHA-256 digest: e65566cbe56b1e1a98ec0f3a1d2f924f7d8d136acd812083fe87610fe7880c4b"
+          printf '%s\n' "$certs" | grep -Fq "V2 Signer: key size (bits): 2048"
 
       - name: Verify APK exists
         run: test -s app/build/outputs/apk/debug/app-debug.apk
