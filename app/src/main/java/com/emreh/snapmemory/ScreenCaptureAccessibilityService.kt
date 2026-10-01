@@ -40,9 +40,6 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         db = MemoryDb(this)
-        val cutoff = System.currentTimeMillis() -
-            Prefs.retention(this) * 86_400_000L
-        db.deleteOlderThan(cutoff)
         handler.removeCallbacks(captureRunnable)
         handler.post(captureRunnable)
     }
@@ -91,9 +88,11 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
                             val fullBitmap = bitmap ?: return@execute
                             if (!changedEnough(fullBitmap)) return@execute
 
-                            val saved = saveBitmap(
+                            val saved = StorageHelper.save(
+                                this@ScreenCaptureAccessibilityService,
                                 fullBitmap,
-                                System.currentTimeMillis()
+                                System.currentTimeMillis(),
+                                targetPackage
                             )
                             if (saved != null) {
                                 db.insert(
@@ -102,13 +101,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
                                     saved.second
                                 )
                                 captureCount++
-                                if (captureCount % 50 == 0) {
-                                    val cutoff = System.currentTimeMillis() -
-                                        Prefs.retention(
-                                            this@ScreenCaptureAccessibilityService
-                                        ) * 86_400_000L
-                                    db.deleteOlderThan(cutoff)
-                                }
+                                
                             }
                         } finally {
                             bitmap?.recycle()
