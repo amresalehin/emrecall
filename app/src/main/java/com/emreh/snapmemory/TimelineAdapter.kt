@@ -26,8 +26,9 @@ class TimelineAdapter(
     private val cache = android.util.LruCache<String, Bitmap>(16)
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     private var rows: List<MemoryDb.Row> = emptyList()
+    private val loadGeneration = java.util.concurrent.atomic.AtomicInteger(0)
 
-    fun submit(newRows: List<MemoryDb.Row>) { rows = newRows; notifyDataSetChanged() }
+    fun submit(newRows: List<MemoryDb.Row>) { loadGeneration.incrementAndGet(); rows = newRows; notifyDataSetChanged() }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val root = MaterialCardView(context).apply {
@@ -69,8 +70,10 @@ class TimelineAdapter(
 
     override fun getItemCount() = rows.size
 
+    fun close() { loadGeneration.incrementAndGet(); executor.shutdownNow(); cache.evictAll() }
+
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
-        executor.shutdownNow(); cache.evictAll(); super.onDetachedFromRecyclerView(recyclerView)
+        close(); super.onDetachedFromRecyclerView(recyclerView)
     }
 
     class VH(root: MaterialCardView, val image: ImageView, val app: TextView, val meta: TextView) : RecyclerView.ViewHolder(root)
