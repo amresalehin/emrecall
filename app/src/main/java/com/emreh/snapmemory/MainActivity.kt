@@ -403,7 +403,11 @@ class MainActivity : FragmentActivity() {
         val days = Prefs.retentionDays(this)
         if (days > 0) {
             val cutoff = System.currentTimeMillis() - days * 86_400_000L
-            db.cleanupOlderThan(cutoff).forEach { StorageHelper.delete(this, it) }
+            db.referencesOlderThan(cutoff).forEach { ref ->
+                if (!StorageHelper.exists(this, ref.path) || StorageHelper.delete(this, ref.path)) {
+                    db.delete(ref.id)
+                }
+            }
         }
     }
 
