@@ -36,10 +36,10 @@ jobs:
           test -x "$apksigner_path"
           "$apksigner_path" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
 
-          expected="$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey |
-            awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          actual="$(keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk |
-            awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          expected="$(keytool -list -v -keystore debug.keystore -storepass emrecall-ci-password -alias emrecall-ci |
+            awk -F': ' '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          actual="$("$apksigner_path" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk |
+            awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
 
           test -n "$expected"
           test -n "$actual"
