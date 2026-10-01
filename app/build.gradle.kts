@@ -9,8 +9,8 @@ android {
         applicationId = "com.emreh.snapmemory"
         minSdk = 30
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.3.0"
     }
     buildTypes {
         release {
@@ -27,5 +27,8 @@ android {
 dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
+    implementation("androidx.biometric:biometric:1.1.0")
+    implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
 }
