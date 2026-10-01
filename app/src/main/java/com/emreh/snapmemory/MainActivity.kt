@@ -35,6 +35,10 @@ class MainActivity : FragmentActivity() {
     private lateinit var scrubber: TimelineScrubberView
     private lateinit var status: TextView
     private var allMode = true
+    private var currentQuery = ""
+    private var currentTodayOnly = false
+    private var timelineOldest = 0L
+    private var timelineNewest = 0L
     private val io = Executors.newSingleThreadExecutor()
     private var ocrIndexer: OcrIndexer? = null
     private val folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -197,11 +201,22 @@ class MainActivity : FragmentActivity() {
         scrubber = TimelineScrubberView(this).apply {
             setOnPositionChanged { fraction ->
                 if (adapter.itemCount > 0) {
-                    (timeline.layoutManager as LinearLayoutManager)
-                        .scrollToPositionWithOffset(
-                            (fraction * (adapter.itemCount - 1)).toInt(),
-                            0
-                        )
+                    if (timelineOldest > 0L && timelineNewest > timelineOldest) {
+                        val targetTime = timelineNewest - ((timelineNewest - timelineOldest) * fraction).toLong()
+                        io.execute {
+                            val position = db.search(currentQuery, 300, if (currentTodayOnly) java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() else null)
+                                .indexOfFirst { it.capturedAt <= targetTime }
+                            val safePosition = if (position >= 0) position else adapter.itemCount - 1
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    (timeline.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(safePosition, 0)
+                                }
+                            }
+                        }
+                    } else {
+                        (timeline.layoutManager as LinearLayoutManager)
+                            .scrollToPositionWithOffset((fraction * (adapter.itemCount - 1)).toInt(), 0)
+                    }
                 }
             }
         }
@@ -231,8 +246,13 @@ class MainActivity : FragmentActivity() {
             maintainStorageNow()
             val rows = db.search(query, 300, start)
             val totalMatches = db.count(query, start)
+            val bounds = db.timeBounds(query, start)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
+                currentQuery = query
+                currentTodayOnly = todayOnly
+                timelineOldest = bounds[0]
+                timelineNewest = bounds[1]
                 adapter.submit(rows)
                 status.text = rows.size.toString() + " shown • " +
                     totalMatches + " matching • " +
