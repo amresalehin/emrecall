@@ -25,6 +25,7 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.switchmaterial.SwitchMaterial
+import java.util.Locale
 import java.util.concurrent.Executors
 
 class MainActivity : FragmentActivity() {
@@ -356,7 +357,7 @@ class MainActivity : FragmentActivity() {
             setOnClickListener {
                 io.execute {
                     val paths = db.clear()
-                    paths.forEach { StorageHelper.delete(this, it) }
+                    paths.forEach { StorageHelper.delete(this@MainActivity, it) }
                     runOnUiThread {
                         adapter.submit(emptyList())
                         Toast.makeText(this@MainActivity, "All memories deleted", Toast.LENGTH_SHORT).show()
