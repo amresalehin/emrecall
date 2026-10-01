@@ -15,9 +15,9 @@ android {
     signingConfigs {
         create("ciDebug") {
             storeFile = file("../debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            storePassword = "emrecall-ci-password"
+            keyAlias = "emrecall-ci"
+            keyPassword = "emrecall-ci-password"
         }
     }
     buildTypes {
