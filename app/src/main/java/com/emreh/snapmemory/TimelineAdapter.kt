@@ -49,6 +49,7 @@ class TimelineAdapter(
         val row = rows[position]
         holder.image.tag = row.path
         holder.image.setImageDrawable(null)
+        val generation = loadGeneration.get()
         val cached = cache.get(row.path)
         if (cached != null) {
             holder.image.setImageBitmap(cached)
@@ -57,7 +58,10 @@ class TimelineAdapter(
                 val bitmap = StorageHelper.open(context, row.path, 720, 720)
                 if (bitmap != null) cache.put(row.path, bitmap) else main.post { onMissing(row) }
                 main.post {
-                    if (holder.bindingAdapterPosition != RecyclerView.NO_POSITION && holder.image.tag == row.path) holder.image.setImageBitmap(bitmap)
+                    if (generation == loadGeneration.get() &&
+                        holder.bindingAdapterPosition != RecyclerView.NO_POSITION &&
+                        holder.image.tag == row.path
+                    ) holder.image.setImageBitmap(bitmap)
                 }
             }
         }
