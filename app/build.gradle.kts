@@ -12,7 +12,18 @@ android {
         versionCode = 4
         versionName = "0.3.0"
     }
+    signingConfigs {
+        create("ciDebug") {
+            storeFile = file("../ci/emrecall-ci-debug.keystore")
+            storePassword = "emrecall-ci-password"
+            keyAlias = "emrecall-ci"
+            keyPassword = "emrecall-ci-password"
+        }
+    }
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("ciDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
