@@ -22,13 +22,28 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+      - name: Run JVM tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
 
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Verify APK and stable signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          apksigner_path="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$apksigner_path"
+          "$apksigner_path" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk
+
+          expected="$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey |
+            awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          actual="$(keytool -printcert -jarfile app/build/outputs/apk/debug/app-debug.apk |
+            awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+
+          test -n "$expected"
+          test -n "$actual"
+          test "$expected" = "$actual"
 
       - name: Verify APK exists
         run: test -s app/build/outputs/apk/debug/app-debug.apk
