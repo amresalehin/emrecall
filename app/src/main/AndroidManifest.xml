@@ -10,7 +10,7 @@
     <application
         android:name=".EmRecallApp"
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_menu_camera"
+        android:icon="@drawable/ic_emrecall"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
