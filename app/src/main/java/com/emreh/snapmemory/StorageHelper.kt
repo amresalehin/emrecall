@@ -13,12 +13,23 @@ object StorageHelper {
     private const val MAX_WIDTH = 720
     private const val QUALITY = 92
     private const val PRIVATE_PREFIX = "private://"
-    data class Saved(val timestamp: Long, val reference: String)\n\n    private fun selectedFolderAvailable(context: Context): Boolean {\n        val uriText = Prefs.folderUri(context) ?: return false\n        return runCatching {\n            DocumentFile.fromTreeUri(context, Uri.parse(uriText))?.canWrite() == true\n        }.getOrDefault(false)\n    }
+    data class Saved(val timestamp: Long, val reference: String)
+
+    private fun selectedFolderAvailable(context: Context): Boolean {
+        val uriText = Prefs.folderUri(context) ?: return false
+        return runCatching {
+            DocumentFile.fromTreeUri(context, Uri.parse(uriText))?.canWrite() == true
+        }.getOrDefault(false)
+    }
 
     fun save(context: Context, bitmap: Bitmap, timestamp: Long, packageName: String): Saved? {
         val normalized = downscale(bitmap)
         return try {
-            if (Prefs.folderUri(context) != null) {\n                saveToSelectedFolder(context, normalized, timestamp, packageName)\n            } else {\n                saveToPrivateStorage(context, normalized, timestamp, packageName)\n            }
+            if (Prefs.folderUri(context) != null) {
+                saveToSelectedFolder(context, normalized, timestamp, packageName)
+            } else {
+                saveToPrivateStorage(context, normalized, timestamp, packageName)
+            }
         } finally {
             if (normalized !== bitmap) normalized.recycle()
         }
@@ -33,7 +44,8 @@ object StorageHelper {
     private fun saveToSelectedFolder(context: Context, bitmap: Bitmap, timestamp: Long, packageName: String): Saved? {
         val uriText = Prefs.folderUri(context) ?: return null
         return runCatching {
-            val tree = DocumentFile.fromTreeUri(context, Uri.parse(uriText))?.takeIf { it.canWrite() }\n                ?: throw IllegalStateException("Selected screenshot folder is unavailable")
+            val tree = DocumentFile.fromTreeUri(context, Uri.parse(uriText))?.takeIf { it.canWrite() }
+                ?: throw IllegalStateException("Selected screenshot folder is unavailable")
             val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(timestamp))
             val dayDir = tree.findFile(day) ?: tree.createDirectory(day) ?: return null
             val safePackage = packageName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(48)
