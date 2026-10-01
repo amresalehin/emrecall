@@ -18,7 +18,8 @@ import java.util.concurrent.Executors
 class TimelineAdapter(
     private val context: Context,
     private val onClick: (MemoryDb.Row) -> Unit,
-    private val onLongClick: (MemoryDb.Row) -> Boolean
+    private val onLongClick: (MemoryDb.Row) -> Boolean,
+    private val onMissing: (MemoryDb.Row) -> Unit
 ) : RecyclerView.Adapter<TimelineAdapter.VH>() {
     private val executor = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
@@ -53,7 +54,7 @@ class TimelineAdapter(
         } else {
             executor.execute {
                 val bitmap = StorageHelper.open(context, row.path, 720, 720)
-                if (bitmap != null) cache.put(row.path, bitmap)
+                if (bitmap != null) cache.put(row.path, bitmap) else main.post { onMissing(row) }
                 main.post {
                     if (holder.bindingAdapterPosition != RecyclerView.NO_POSITION && holder.image.tag == row.path) holder.image.setImageBitmap(bitmap)
                 }
