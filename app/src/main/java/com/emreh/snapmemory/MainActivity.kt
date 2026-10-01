@@ -1,5 +1,8 @@
 package com.emreh.snapmemory
 
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.view.accessibility.AccessibilityManager
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import android.content.Intent
 import android.graphics.Color
@@ -32,8 +35,20 @@ class MainActivity : FragmentActivity() {
     private lateinit var scrubber: TimelineScrubberView
     private lateinit var status: TextView
     private var allMode = true
-    private val folderPicker = 4107
     private val io = Executors.newSingleThreadExecutor()
+    private var ocrIndexer: OcrIndexer? = null
+    private val folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            Prefs.setFolderUri(this, uri.toString())
+            Toast.makeText(this, "Screenshot folder selected", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,9 +61,11 @@ class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         if (::timeline.isInitialized) renderTimeline()
+        maintainStorage()
     }
 
     override fun onDestroy() {
+        ocrIndexer?.close()
         io.shutdownNow()
         super.onDestroy()
     }
@@ -210,14 +227,18 @@ class MainActivity : FragmentActivity() {
                     .toInstant()
                     .toEpochMilli()
             } else null
+            maintainStorageNow()
             val rows = db.search(query, 300, start)
-            val total = if (todayOnly || query.isNotBlank()) db.count() else rows.size.toLong()
+            val totalMatches = db.count(query, start)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 adapter.submit(rows)
                 status.text = rows.size.toString() + " shown • " +
-                    total + " stored • " +
-                    if (Prefs.enabled(this)) "capture on" else "capture paused"
+                    totalMatches + " matching • " +
+                    if (serviceEnabled()) "service on" else "service off" +
+                    " • " + if (Prefs.enabled(this)) "capture on" else "capture paused" +
+                    " • last: " + lastCaptureText() +
+                    if (Prefs.lastError(this).isBlank()) "" else " • error: " + Prefs.lastError(this)
                 updateScrubber()
             }
         }
@@ -264,7 +285,7 @@ class MainActivity : FragmentActivity() {
         panel.addView(MaterialButton(this).apply {
             text = "Run OCR on pending screenshots"
             setOnClickListener {
-                OcrIndexer(this@MainActivity, db).indexPending(
+                getOcrIndexer().indexPending(
                     onProgress = { done, total ->
                         status.text = if (total == 0) "OCR: nothing pending" else "OCR: " + done + " / " + total
                     },
@@ -366,30 +387,39 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun chooseFolder() {
-        startActivityForResult(
-            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                addFlags(
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-                )
-            },
-            folderPicker
-        )
+        folderPickerLauncher.launch(null)
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == folderPicker && resultCode == RESULT_OK) {
-            data?.data?.let {
-                contentResolver.takePersistableUriPermission(
-                    it,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                Prefs.setFolderUri(this, it.toString())
-                Toast.makeText(this, "Screenshot folder selected", Toast.LENGTH_SHORT).show()
-            }
+    private fun getOcrIndexer(): OcrIndexer =
+        ocrIndexer ?: OcrIndexer(this, db).also { ocrIndexer = it }
+
+    private fun maintainStorage() {
+        io.execute { maintainStorageNow() }
+    }
+
+    private fun maintainStorageNow() {
+        db.allReferences().forEach { ref ->
+            if (!StorageHelper.exists(this, ref.path)) db.delete(ref.id)
         }
+        val cutoff = System.currentTimeMillis() - Prefs.retentionDays(this) * 86_400_000L
+        if (Prefs.retentionDays(this) > 0) {
+            db.cleanupOlderThan(cutoff).forEach { StorageHelper.delete(this, it) }
+        }
+    }
+
+    private fun serviceEnabled(): Boolean {
+        val manager = getSystemService(AccessibilityManager::class.java)
+        return manager.isEnabled &&
+            manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).any {
+                it.resolveInfo.serviceInfo.packageName == packageName &&
+                    it.resolveInfo.serviceInfo.name == ScreenCaptureAccessibilityService::class.java.name
+            }
+    }
+
+    private fun lastCaptureText(): String {
+        val value = Prefs.lastCaptureAt(this)
+        return if (value == 0L) "never"
+        else java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(java.util.Date(value))
     }
 
     private fun chip(text: String, checked: Boolean, action: () -> Unit) =
