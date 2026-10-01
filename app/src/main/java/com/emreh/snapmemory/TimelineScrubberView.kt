@@ -64,7 +64,7 @@ class TimelineScrubberView(context: Context) : View(context) {
         val available = max(1f, trackHeight - thumbHeight)
         val thumbTop = top + available * fraction
         val thumbBottom = thumbTop + thumbHeight
-        thumbPaint.color = resolveColor(android.R.attr.colorAccent)
+        thumbPaint.color = resolveColor(com.google.android.material.R.attr.colorPrimary)
         val rect = RectF(
             centerX - 9f * d,
             thumbTop,
