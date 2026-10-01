@@ -96,9 +96,9 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
                             )
                             if (saved != null) {
                                 db.insert(
-                                    saved.first,
+                                    saved.timestamp,
                                     targetPackage,
-                                    saved.second
+                                    saved.reference
                                 )
                                 captureCount++
                                 
