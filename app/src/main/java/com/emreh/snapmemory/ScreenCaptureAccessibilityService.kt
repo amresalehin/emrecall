@@ -73,7 +73,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         val active = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
             ?: windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
             ?: return
-        val pkg = active.root?.packageName?.toString() ?: active.title?.toString() ?: return
+        val pkg = active.root?.packageName?.toString() ?: return
         if (pkg != foregroundPackage) forceNextCapture = true
         foregroundPackage = pkg
     }
