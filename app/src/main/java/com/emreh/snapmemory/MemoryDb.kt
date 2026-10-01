@@ -154,6 +154,18 @@ class MemoryDb private constructor(context: Context) :
         return out
     }
 
+    fun timeBounds(query: String = "", fromInclusive: Long? = null): LongArray {
+        val rows = search(query, 1, fromInclusive)
+        if (rows.isEmpty()) return longArrayOf(0L, 0L)
+        val newest = rows.first().capturedAt
+        val oldest = readableDatabase.rawQuery(
+            "SELECT MIN(s.captured_at) FROM snapshots s" +
+                (if (fromInclusive != null) " WHERE s.captured_at >= ?" else ""),
+            if (fromInclusive != null) arrayOf(fromInclusive.toString()) else null
+        ).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else newest }
+        return longArrayOf(oldest, newest)
+    }
+
     fun count(query: String = "", fromInclusive: Long? = null): Long {
         val clauses = ArrayList<String>()
         val args = ArrayList<String>()
