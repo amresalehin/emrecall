@@ -213,7 +213,11 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         val days = Prefs.retentionDays(this)
         if (days <= 0) return
         val cutoff = System.currentTimeMillis() - days * 86_400_000L
-        db.cleanupOlderThan(cutoff).forEach { StorageHelper.delete(this, it) }
+        db.referencesOlderThan(cutoff).forEach { ref ->
+            if (!StorageHelper.exists(this, ref.path) || StorageHelper.delete(this, ref.path)) {
+                db.delete(ref.id)
+            }
+        }
     }
 
     private fun isScreenUsable() = powerManager.isInteractive && !keyguardManager.isKeyguardLocked
