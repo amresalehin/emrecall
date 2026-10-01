@@ -1,56 +1,36 @@
-# SnapMemory Lite
+# EmRecall
 
 Lightweight, local-first Android screen recall.
 
 ## What it does
 
-- Captures the active screen through Android AccessibilityService screenshot APIs.
-- Probes each capture at 48×27 and saves only meaningful visual changes.
-- Stores screenshots as WebP in app-private external storage.
-- Stores capture metadata in local SQLite.
-- Searches by package name and OCR text.
-- Runs OCR only when manually requested. OCR uses the thin Google Play-services delivery to keep the APK small; the OCR model may need to download before first use.
-- Supports 5/7/10/15/20 second capture intervals.
-- Supports 7/30/90 day retention.
-- Lets the user exclude sensitive app package names.
+- Captures the active application through Android AccessibilityService screenshot APIs.
+- Skips locked/off-screen states and known system/keyboard overlays.
+- Uses block-averaged visual change detection and always captures application switches.
+- Saves screenshots as 720px-max WebP in private app storage by default.
+- Stores metadata and OCR state in local SQLite with WAL and schema migration.
+- Uses an asynchronous RecyclerView timeline with sampled thumbnail decoding and a bounded memory cache.
+- Searches package names and OCR text with safe LIKE escaping.
+- Runs OCR on demand using the Latin ML Kit recognizer.
+- Supports single-item deletion, clear-all, pause/resume capture, optional biometric lock, secure app windows, and 7/30/90-day retention.
+- Optional SAF folder selection; a selected folder is accessible to apps/services to which the user grants access.
 - No account, cloud sync, embeddings, captions, or always-on AI.
 
-## Android requirements
+## Privacy and Android requirements
 
 - Android 11 / API 30 or newer.
-- The user must explicitly enable the accessibility service in Android Settings.
-- This build is intended for personal/sideloaded use unless its eventual distribution satisfies the current Android and Google Play accessibility-service requirements.
+- The user must explicitly enable the accessibility service.
+- Android 13+ may require **Allow restricted settings** for a sideloaded accessibility service.
+- Default exclusions cover Android system UI, the keyguard, common keyboards, password manager/authenticator packages, Google Play services, and Settings. Users can add more package names.
+- OCR uses ML Kit's Latin recognizer and depends on Google Play services; Bengali and other non-Latin scripts are not guaranteed.
+- A user-selected SAF folder is outside EmRecall's private storage boundary and may be readable by apps/services the user has granted access to.
 
 ## Build
 
-GitHub Actions builds a debug APK on every push and on manual dispatch.
+GitHub Actions builds a debug APK on pushes to `main` and on manual dispatch.
 
-The workflow uses JDK 17, Gradle 8.9, Android API 35, and Build Tools 35.0.0.
-
-The generated APK is uploaded as the `SnapMemoryLite-debug` workflow artifact.
-
-## Lightweight design
-
-```
-AccessibilityService
-        ↓
-Screenshot
-        ↓
-48×27 change probe
-        ↓
-meaningful change?
-   no ──→ discard
-   yes
-        ↓
-720px max WebP
-        ↓
-SQLite metadata
-        ↓
-optional on-demand OCR
-```
-
-The screenshot callback is delivered on a single worker executor, the HardwareBuffer is always closed, and capture processing never starts a second screenshot while one is still being processed.
+The debug workflow uses JDK 17, Gradle 8.9 and Android API 35.
 
 ## Current boundary
 
-This is deliberately a small MVP. Semantic embeddings, AI captions, knowledge graphs, cloud sync, and continuous OCR are intentionally out of scope until the capture/search loop is proven stable on-device.
+Semantic embeddings, AI captions, knowledge graphs, cloud sync, and continuous OCR are intentionally out of scope until the capture/search loop is proven stable on-device.
