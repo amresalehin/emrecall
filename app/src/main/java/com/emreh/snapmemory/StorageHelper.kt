@@ -38,8 +38,20 @@ object StorageHelper {
             val dayDir = tree.findFile(day) ?: tree.createDirectory(day) ?: return null
             val safePackage = packageName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(48)
             val file = dayDir.createFile("image/webp", "${timestamp}_${safePackage}.webp") ?: return null
-            val wrote = context.contentResolver.openOutputStream(file.uri)?.use { out -> bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, QUALITY, out) } == true
-            if (!wrote) { file.delete(); null } else Saved(timestamp, file.uri.toString())
+            try {
+                val wrote = context.contentResolver.openOutputStream(file.uri)?.use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, QUALITY, out)
+                } == true
+                if (!wrote) {
+                    file.delete()
+                    null
+                } else {
+                    Saved(timestamp, file.uri.toString())
+                }
+            } catch (t: Throwable) {
+                file.delete()
+                throw t
+            }
         }.onFailure { Log.w(TAG, "SAF save failed", it) }.getOrNull()
     }
 
@@ -96,7 +108,10 @@ object StorageHelper {
         if (bytes.isEmpty()) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val options = BitmapFactory.Options().apply { inSampleSize = calculateSample(bounds, maxWidth, maxHeight); inPreferredConfig = Bitmap.Config.RGB_565 }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = calculateSample(bounds, maxWidth, maxHeight)
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     }
 
