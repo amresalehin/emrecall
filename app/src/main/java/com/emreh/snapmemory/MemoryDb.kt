@@ -222,17 +222,18 @@ class MemoryDb private constructor(context: Context) :
     }
 
     fun markOcrProcessing(id: Long): Boolean {
-        val values = android.content.ContentValues().apply {
-            put("ocr_status", 1)
-            put("ocr_error", "")
-            put("ocr_attempts", "ocr_attempts + 1")
-        }
-        return writableDatabase.update(
-            "snapshots",
-            values,
-            "id=? AND ocr_status IN (0,3)",
+        return writableDatabase.rawQuery(
+            "SELECT ocr_attempts FROM snapshots WHERE id=? AND ocr_status IN (0,3)",
             arrayOf(id.toString())
-        ) > 0
+        ).use { c ->
+            if (!c.moveToFirst()) return false
+            val attempts = c.getInt(0) + 1
+            writableDatabase.execSQL(
+                "UPDATE snapshots SET ocr_status=1,ocr_attempts=?,ocr_error='' WHERE id=? AND ocr_status IN (0,3)",
+                arrayOf(attempts, id)
+            )
+            true
+        }
     }
 
     fun updateOcr(id: Long, text: String) {
