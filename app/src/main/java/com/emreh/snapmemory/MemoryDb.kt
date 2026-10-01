@@ -5,7 +5,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 class MemoryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "memory.db", null, 5) {
+    SQLiteOpenHelper(context.applicationContext, "memory.db", null, 6) {
 
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
@@ -21,7 +21,10 @@ class MemoryDb private constructor(context: Context) :
                 "app_label TEXT NOT NULL DEFAULT ''," +
                 "path TEXT NOT NULL," +
                 "ocr_text TEXT NOT NULL DEFAULT ''," +
-                "ocr_done INTEGER NOT NULL DEFAULT 0)"
+                "ocr_done INTEGER NOT NULL DEFAULT 0," +
+                "ocr_status INTEGER NOT NULL DEFAULT 0," +
+                "ocr_attempts INTEGER NOT NULL DEFAULT 0," +
+                "ocr_error TEXT NOT NULL DEFAULT '')"
         )
         createIndexes(db)
         createFts(db)
@@ -42,6 +45,12 @@ class MemoryDb private constructor(context: Context) :
         if (oldVersion < 5) {
             createFts(db)
             rebuildFts(db)
+        }
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE snapshots ADD COLUMN ocr_status INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE snapshots ADD COLUMN ocr_attempts INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE snapshots ADD COLUMN ocr_error TEXT NOT NULL DEFAULT ''")
+            db.execSQL("UPDATE snapshots SET ocr_status=CASE WHEN ocr_done=1 THEN 2 ELSE 0 END")
         }
         createIndexes(db)
     }
@@ -189,7 +198,7 @@ class MemoryDb private constructor(context: Context) :
         val out = ArrayList<Row>()
         readableDatabase.rawQuery(
             "SELECT id,captured_at,package_name,app_label,path,ocr_text,ocr_done " +
-                "FROM snapshots WHERE ocr_done=0 ORDER BY captured_at DESC LIMIT ?",
+                "FROM snapshots WHERE ocr_status IN (0,3) ORDER BY captured_at DESC LIMIT ?",
             arrayOf(limit.toString())
         ).use { c ->
             while (c.moveToNext()) out += Row(
@@ -200,12 +209,32 @@ class MemoryDb private constructor(context: Context) :
         return out
     }
 
-    fun updateOcr(id: Long, text: String) {
-        writableDatabase.execSQL("UPDATE snapshots SET ocr_text=?,ocr_done=1 WHERE id=?", arrayOf(text, id))
+    fun markOcrProcessing(id: Long): Boolean {
+        val values = android.content.ContentValues().apply {
+            put("ocr_status", 1)
+            put("ocr_error", "")
+            put("ocr_attempts", "ocr_attempts + 1")
+        }
+        return writableDatabase.update(
+            "snapshots",
+            values,
+            "id=? AND ocr_status IN (0,3)",
+            arrayOf(id.toString())
+        ) > 0
     }
 
-    fun markOcrDone(id: Long) {
-        writableDatabase.execSQL("UPDATE snapshots SET ocr_done=1 WHERE id=?", arrayOf(id))
+    fun updateOcr(id: Long, text: String) {
+        writableDatabase.execSQL(
+            "UPDATE snapshots SET ocr_text=?,ocr_done=1,ocr_status=2,ocr_error='' WHERE id=?",
+            arrayOf(text, id)
+        )
+    }
+
+    fun markOcrFailed(id: Long, errorMessage: String) {
+        writableDatabase.execSQL(
+            "UPDATE snapshots SET ocr_done=0,ocr_status=3,ocr_error=? WHERE id=?",
+            arrayOf(errorMessage.take(500), id)
+        )
     }
 
     fun delete(id: Long): String? {
