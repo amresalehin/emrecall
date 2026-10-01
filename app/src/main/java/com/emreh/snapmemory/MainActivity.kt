@@ -1,6 +1,6 @@
 package com.emreh.snapmemory
 
-import android.app.Activity
+import androidx.fragment.app.FragmentActivity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -24,7 +24,7 @@ import com.google.android.material.chip.ChipGroup
 import com.google.android.material.switchmaterial.SwitchMaterial
 import java.util.concurrent.Executors
 
-class MainActivity : Activity() {
+class MainActivity : FragmentActivity() {
     private val db get() = MemoryDb.get(this)
     private lateinit var timeline: RecyclerView
     private lateinit var adapter: TimelineAdapter
