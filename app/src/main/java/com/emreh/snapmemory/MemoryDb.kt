@@ -225,14 +225,20 @@ class MemoryDb private constructor(context: Context) :
         return writableDatabase.rawQuery(
             "SELECT ocr_attempts FROM snapshots WHERE id=? AND ocr_status IN (0,3)",
             arrayOf(id.toString())
-        ).use { c ->
-            if (!c.moveToFirst()) return false
-            val attempts = c.getInt(0) + 1
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return false
+            val attempts = cursor.getInt(0) + 1
             writableDatabase.execSQL(
                 "UPDATE snapshots SET ocr_status=1,ocr_attempts=?,ocr_error='' WHERE id=? AND ocr_status IN (0,3)",
                 arrayOf(attempts, id)
             )
-            true
+            writableDatabase.query(
+                "snapshots",
+                arrayOf("ocr_status"),
+                "id=?",
+                arrayOf(id.toString()),
+                null, null, null
+            ).use { verify -> verify.moveToFirst() && verify.getInt(0) == 1 }
         }
     }
 
