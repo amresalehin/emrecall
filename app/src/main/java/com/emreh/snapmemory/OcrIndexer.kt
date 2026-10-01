@@ -30,7 +30,7 @@ class OcrIndexer(private val context: Context, private val db: MemoryDb) {
         val row = rows[index]
         val bitmap = StorageHelper.open(context, row.path, 1280, 1920)
         if (bitmap == null) {
-            db.markOcrDone(row.id)
+            db.markOcrFailed(row.id, errorMessage = "Image could not be opened")
             next(rows, index, onProgress, onDone)
             return
         }
@@ -42,7 +42,7 @@ class OcrIndexer(private val context: Context, private val db: MemoryDb) {
             }
             .addOnFailureListener(executor) { error ->
                 Log.w(TAG, "OCR failed for " + row.id, error)
-                db.markOcrDone(row.id)
+                db.markOcrFailed(row.id, errorMessage = error.message ?: "OCR failed")
                 bitmap.recycle()
                 next(rows, index, onProgress, onDone)
             }
