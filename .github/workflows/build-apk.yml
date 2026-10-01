@@ -15,6 +15,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    continue-on-error: false
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -27,10 +28,10 @@ jobs:
           java-version: '17'
 
       - name: Run JVM tests
-        run: ./gradlew --no-daemon :app:testDebugUnitTest
+        run: ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
-        run: ./gradlew --no-daemon :app:assembleDebug
+        run: ./gradlew --no-daemon :app:assembleDebug --stacktrace
 
       - name: Verify APK and stable signing
         shell: bash
