@@ -1,5 +1,9 @@
 name: Build APK
 
+concurrency:
+  group: emrecall-main-build
+  cancel-in-progress: true
+
 on:
   push:
     branches: [ main ]
@@ -14,7 +18,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
