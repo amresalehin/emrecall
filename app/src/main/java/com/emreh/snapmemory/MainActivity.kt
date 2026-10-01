@@ -176,6 +176,9 @@ class MainActivity : FragmentActivity() {
                 onLongClick = { row ->
                     deleteOne(row)
                     true
+                },
+                onMissing = { row ->
+                    deleteOne(row, false)
                 }
             ).also { adapter = it }
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -353,7 +356,7 @@ class MainActivity : FragmentActivity() {
             setOnClickListener {
                 io.execute {
                     val paths = db.clear()
-                    paths.forEach(::deleteReference)
+                    paths.forEach { StorageHelper.delete(this, it) }
                     runOnUiThread {
                         adapter.submit(emptyList())
                         Toast.makeText(this@MainActivity, "All memories deleted", Toast.LENGTH_SHORT).show()
@@ -367,22 +370,14 @@ class MainActivity : FragmentActivity() {
         dialog.show()
     }
 
-    private fun deleteOne(row: MemoryDb.Row) {
+    private fun deleteOne(row: MemoryDb.Row, notifyUser: Boolean = true) {
         io.execute {
             val path = db.delete(row.id)
-            if (path != null) deleteReference(path)
+            if (path != null) StorageHelper.delete(this, path)
             runOnUiThread {
-                Toast.makeText(this, "Memory deleted", Toast.LENGTH_SHORT).show()
+                if (notifyUser) Toast.makeText(this, "Memory deleted", Toast.LENGTH_SHORT).show()
                 renderTimeline()
             }
-        }
-    }
-
-    private fun deleteReference(reference: String) = runCatching {
-        if (reference.startsWith("content://")) {
-            contentResolver.delete(android.net.Uri.parse(reference), null, null)
-        } else {
-            java.io.File(reference).delete()
         }
     }
 
@@ -398,13 +393,24 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun maintainStorageNow() {
+        db.labelsNeedingBackfill().forEach { row ->
+            db.updateAppLabel(row.id, resolveAppLabel(row.packageName))
+        }
         db.allReferences().forEach { ref ->
             if (!StorageHelper.exists(this, ref.path)) db.delete(ref.id)
         }
-        val cutoff = System.currentTimeMillis() - Prefs.retentionDays(this) * 86_400_000L
-        if (Prefs.retentionDays(this) > 0) {
+        val days = Prefs.retentionDays(this)
+        if (days > 0) {
+            val cutoff = System.currentTimeMillis() - days * 86_400_000L
             db.cleanupOlderThan(cutoff).forEach { StorageHelper.delete(this, it) }
         }
+    }
+
+    private fun resolveAppLabel(packageName: String): String = runCatching {
+        val info = packageManager.getApplicationInfo(packageName, 0)
+        packageManager.getApplicationLabel(info).toString()
+    }.getOrElse {
+        packageName.substringAfterLast(".").replaceFirstChar { it.uppercase() }
     }
 
     private fun serviceEnabled(): Boolean {
