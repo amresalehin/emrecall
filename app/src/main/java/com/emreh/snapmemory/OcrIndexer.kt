@@ -35,12 +35,12 @@ class OcrIndexer(private val context: Context, private val db: MemoryDb) {
             return
         }
         recognizer.process(InputImage.fromBitmap(bitmap, 0))
-            .addOnSuccessListener { result ->
+            .addOnSuccessListener(executor) { result ->
                 db.updateOcr(row.id, result.text.trim())
                 bitmap.recycle()
                 next(rows, index, onProgress, onDone)
             }
-            .addOnFailureListener { error ->
+            .addOnFailureListener(executor) { error ->
                 Log.w(TAG, "OCR failed for " + row.id, error)
                 db.markOcrDone(row.id)
                 bitmap.recycle()
