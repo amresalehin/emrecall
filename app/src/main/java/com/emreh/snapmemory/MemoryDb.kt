@@ -110,7 +110,7 @@ class MemoryDb private constructor(context: Context) :
 
     private fun ftsQuery(query: String): String? {
         val tokens = query.trim().split(Regex("\\s+")).mapNotNull { token ->
-            token.replace(Regex("[^\\p{L}\\p{N}_-]"), "").takeIf { it.isNotEmpty() }
+            token.replace(Regex("[^\\p{L}\\p{N}_]"), "").takeIf { it.isNotEmpty() }
         }
         return tokens.takeIf { it.isNotEmpty() }?.joinToString(" AND ") { it + "*" }
     }
