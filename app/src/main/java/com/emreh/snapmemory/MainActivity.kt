@@ -5,7 +5,6 @@ import android.view.accessibility.AccessibilityManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
@@ -90,8 +89,6 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun configureSystemBars() {
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
             val bars = insets.getInsets(
                 WindowInsets.Type.statusBars() or
@@ -266,7 +263,7 @@ class MainActivity : FragmentActivity() {
             setTypeface(null, Typeface.BOLD)
         })
         panel.addView(TextView(this).apply {
-            text = "Long-press a timeline item to delete it. Default storage is private to EmRecall."
+            text = "Long-press a timeline item to delete it. Default storage is private to EmRecall. On Android 13+, a sideloaded accessibility service may also require Allow restricted settings in Android Settings."
             textSize = 14f
             alpha = 0.72f
             setPadding(0, 8.dp(), 0, 18.dp())
@@ -374,7 +371,7 @@ class MainActivity : FragmentActivity() {
     private fun deleteOne(row: MemoryDb.Row, notifyUser: Boolean = true) {
         io.execute {
             val path = db.delete(row.id)
-            if (path != null) StorageHelper.delete(this, path)
+            if (path != null) StorageHelper.delete(this@MainActivity, path)
             runOnUiThread {
                 if (notifyUser) Toast.makeText(this, "Memory deleted", Toast.LENGTH_SHORT).show()
                 renderTimeline()
