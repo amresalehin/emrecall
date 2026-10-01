@@ -226,14 +226,13 @@ class MemoryDb private constructor(context: Context) :
         return paths
     }
 
-    fun cleanupOlderThan(cutoff: Long): List<String> {
-        val paths = ArrayList<String>()
+    fun referencesOlderThan(cutoff: Long): List<Reference> {
+        val out = ArrayList<Reference>()
         readableDatabase.rawQuery(
-            "SELECT path FROM snapshots WHERE captured_at < ?",
+            "SELECT id,path FROM snapshots WHERE captured_at < ? ORDER BY captured_at ASC",
             arrayOf(cutoff.toString())
-        ).use { c -> while (c.moveToNext()) paths += c.getString(0) }
-        writableDatabase.delete("snapshots", "captured_at < ?", arrayOf(cutoff.toString()))
-        return paths
+        ).use { c -> while (c.moveToNext()) out += Reference(c.getLong(0), c.getString(1)) }
+        return out
     }
 
     companion object {
