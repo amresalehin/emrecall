@@ -4,9 +4,8 @@ plugins {
 }
 
 android {
-    namespace = "com.android.emrecall"
+    namespace = "com.emreh.snapmemory"
     compileSdk = 35
-
     defaultConfig {
         applicationId = "com.emreh.snapmemory"
         minSdk = 30
@@ -14,21 +13,18 @@ android {
         versionCode = 3
         versionName = "0.2.0"
     }
-
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
 }
-
 dependencies {
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
