@@ -70,6 +70,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onDestroy() {
         ocrIndexer?.close()
+        if (::adapter.isInitialized) adapter.close()
         io.shutdownNow()
         super.onDestroy()
     }
