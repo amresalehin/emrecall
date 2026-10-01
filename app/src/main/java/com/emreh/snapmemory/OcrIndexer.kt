@@ -1,72 +1,59 @@
 package com.emreh.snapmemory
 
-import android.graphics.BitmapFactory
+import android.content.Context
+import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class OcrIndexer(
-    private val db: MemoryDb
-) {
-    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+class OcrIndexer(private val context: Context, private val db: MemoryDb) {
+    private val executor = Executors.newSingleThreadExecutor()
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-    fun indexPending(
-        maxItems: Int = 120,
-        onProgress: (Int, Int) -> Unit,
-        onDone: () -> Unit
-    ) {
+    fun indexPending(maxItems: Int = 120, onProgress: (Int, Int) -> Unit, onDone: () -> Unit) {
         executor.execute {
             val rows = db.pendingOcr(maxItems)
             if (rows.isEmpty()) {
-                onProgress(0, 0)
-                onDone()
+                (context as? MainActivity)?.runOnUiThread { onProgress(0, 0); onDone() }
                 return@execute
             }
             process(rows, 0, onProgress, onDone)
         }
     }
 
-    private fun process(
-        rows: List<MemoryDb.Row>,
-        index: Int,
-        onProgress: (Int, Int) -> Unit,
-        onDone: () -> Unit
-    ) {
+    private fun process(rows: List<MemoryDb.Row>, index: Int, onProgress: (Int, Int) -> Unit, onDone: () -> Unit) {
         if (index >= rows.size) {
-            onDone()
+            (context as? MainActivity)?.runOnUiThread(onDone)
             return
         }
-
         val row = rows[index]
-        val bitmap = BitmapFactory.decodeFile(row.path)
+        val bitmap = StorageHelper.open(context, row.path, 1280, 1920)
         if (bitmap == null) {
-            onProgress(index + 1, rows.size)
-            executor.execute {
-                process(rows, index + 1, onProgress, onDone)
-            }
+            db.markOcrDone(row.id)
+            next(rows, index, onProgress, onDone)
             return
         }
-
-        val image = InputImage.fromBitmap(bitmap, 0)
-        recognizer.process(image)
-            .addOnSuccessListener(executor) { result ->
+        recognizer.process(InputImage.fromBitmap(bitmap, 0))
+            .addOnSuccessListener { result ->
                 db.updateOcr(row.id, result.text.trim())
                 bitmap.recycle()
-                onProgress(index + 1, rows.size)
-                process(rows, index + 1, onProgress, onDone)
+                next(rows, index, onProgress, onDone)
             }
-            .addOnFailureListener(executor) {
+            .addOnFailureListener { error ->
+                Log.w(TAG, "OCR failed for " + row.id, error)
+                db.markOcrDone(row.id)
                 bitmap.recycle()
-                onProgress(index + 1, rows.size)
-                process(rows, index + 1, onProgress, onDone)
+                next(rows, index, onProgress, onDone)
             }
     }
 
-    fun close() {
-        recognizer.close()
-        executor.shutdownNow()
+    private fun next(rows: List<MemoryDb.Row>, index: Int, onProgress: (Int, Int) -> Unit, onDone: () -> Unit) {
+        (context as? MainActivity)?.runOnUiThread { onProgress(index + 1, rows.size) }
+        executor.execute { process(rows, index + 1, onProgress, onDone) }
     }
+
+    fun close() { recognizer.close(); executor.shutdownNow() }
+
+    companion object { private const val TAG = "EmRecall.OCR" }
 }
