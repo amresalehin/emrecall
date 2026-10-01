@@ -60,7 +60,7 @@ class TimelineAdapter(
                 }
             }
         }
-        holder.app.text = appLabel(row.packageName)
+        holder.app.text = row.appLabel.ifBlank { appLabel(row.packageName) }
         holder.meta.text = timeFormat.format(Date(row.capturedAt)) + " • " +
             if (row.ocrText.isNotBlank()) row.ocrText.replace("\n", " ").take(100) else "Tap to inspect this moment"
         holder.itemView.setOnClickListener { onClick(row) }
