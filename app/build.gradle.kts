@@ -42,4 +42,5 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    testImplementation("junit:junit:4.13.2")
 }
