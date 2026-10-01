@@ -1,7 +1,7 @@
 package com.emreh.snapmemory
 
 import android.app.Activity
-import android.graphics.BitmapFactory
+
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.ImageView
@@ -27,7 +27,7 @@ class PreviewActivity : Activity() {
         root.addView(ImageView(this).apply {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setImageBitmap(BitmapFactory.decodeFile(path))
+            setImageBitmap(StorageHelper.open(this@PreviewActivity, path))
         }, LinearLayout.LayoutParams(-1, 0, 1f))
 
         setContentView(root)
