@@ -18,7 +18,6 @@ import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.abs
 
 class ScreenCaptureAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
@@ -27,7 +26,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     private lateinit var db: MemoryDb
     @Volatile private var foregroundPackage = "unknown"
     @Volatile private var forceNextCapture = true
-    @Volatile private var lastSavedProbe: IntArray? = null
+    private val changeDetector = ChangeDetector()
     private val powerManager by lazy { getSystemService(PowerManager::class.java) }
     private val keyguardManager by lazy { getSystemService(KeyguardManager::class.java) }
 
@@ -126,7 +125,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
             }
             val fullBitmap = bitmap ?: run { failCapture("Could not create bitmap", null); return }
             val probe = buildProbe(fullBitmap)
-            if (!forceNextCapture && !changedEnough(probe)) return
+            if (!changeDetector.shouldCapture(probe, forceNextCapture)) return
             val now = System.currentTimeMillis()
             val saved = StorageHelper.save(this, fullBitmap, now, targetPackage) ?: run {
                 failCapture("Screenshot could not be saved", null)
@@ -135,7 +134,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
             try {
                 val label = appLabel(targetPackage)
                 db.insert(saved.timestamp, targetPackage, label, saved.reference)
-                lastSavedProbe = probe
+                changeDetector.markSaved(probe)
                 forceNextCapture = false
                 Prefs.setLastCaptureAt(this, now)
                 Prefs.setLastError(this, "")
@@ -198,18 +197,6 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
             }
         }
         return out
-    }
-
-    private fun changedEnough(probe: IntArray): Boolean {
-        val previous = lastSavedProbe ?: return true
-        var changedCells = 0
-        var totalDelta = 0L
-        for (i in probe.indices) {
-            val delta = abs(probe[i] - previous[i])
-            totalDelta += delta
-            if (delta >= 9) changedCells++
-        }
-        return changedCells.toDouble() / probe.size >= 0.08 || totalDelta.toDouble() / probe.size >= 5.0
     }
 
     private fun enforceRetention() {
