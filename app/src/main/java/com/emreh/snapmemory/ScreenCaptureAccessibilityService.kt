@@ -2,6 +2,10 @@ package com.emreh.snapmemory
 
 import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Handler
@@ -10,6 +14,7 @@ import android.os.PowerManager
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -20,35 +25,56 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     private val worker = Executors.newSingleThreadExecutor()
     private val captureBusy = AtomicBoolean(false)
     private lateinit var db: MemoryDb
-
     @Volatile private var foregroundPackage = "unknown"
     @Volatile private var forceNextCapture = true
     @Volatile private var lastSavedProbe: IntArray? = null
-    @Volatile private var lastCaptureAt = 0L
-    @Volatile private var lastError = ""
-
     private val powerManager by lazy { getSystemService(PowerManager::class.java) }
     private val keyguardManager by lazy { getSystemService(KeyguardManager::class.java) }
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> handler.removeCallbacks(captureRunnable)
+                Intent.ACTION_SCREEN_ON -> {
+                    handler.removeCallbacks(captureRunnable)
+                    handler.post(captureRunnable)
+                }
+            }
+        }
+    }
 
     private val captureRunnable = object : Runnable {
         override fun run() {
             if (Prefs.enabled(this@ScreenCaptureAccessibilityService) && isScreenUsable()) captureOnce()
-            handler.postDelayed(this, Prefs.interval(this@ScreenCaptureAccessibilityService) * 1000L)
+            if (isScreenUsable()) handler.postDelayed(this, Prefs.interval(this@ScreenCaptureAccessibilityService) * 1000L)
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         db = MemoryDb.get(this)
+        registerReceiver(screenReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        })
+        refreshForegroundPackage()
         handler.removeCallbacks(captureRunnable)
-        handler.post(captureRunnable)
+        if (isScreenUsable()) handler.post(captureRunnable)
+        enforceRetention()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
-        val pkg = event.packageName?.toString() ?: return
-        if (pkg == packageName || pkg == "com.android.systemui" || pkg.contains("inputmethod", true) || pkg.contains("keyboard", true)) return
-        if (foregroundPackage != pkg) forceNextCapture = true
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            refreshForegroundPackage()
+        }
+    }
+
+    private fun refreshForegroundPackage() {
+        val active = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
+            ?: windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
+            ?: return
+        val pkg = active.root?.packageName?.toString() ?: active.title?.toString() ?: return
+        if (pkg != foregroundPackage) forceNextCapture = true
         foregroundPackage = pkg
     }
 
@@ -56,6 +82,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        runCatching { unregisterReceiver(screenReceiver) }
         worker.shutdownNow()
         super.onDestroy()
     }
@@ -63,7 +90,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     private fun captureOnce() {
         if (!isScreenUsable() || !captureBusy.compareAndSet(false, true)) return
         val targetPackage = foregroundPackage
-        if (targetPackage == "unknown" || targetPackage == packageName || Prefs.excluded(this).contains(targetPackage)) {
+        if (targetPackage == "unknown" || targetPackage == packageName || isExcluded(targetPackage)) {
             captureBusy.set(false)
             return
         }
@@ -73,58 +100,71 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
                     try {
                         worker.execute { processScreenshot(screenshot, targetPackage) }
                     } catch (e: RejectedExecutionException) {
-                        captureBusy.set(false)
-                        lastError = "Capture worker rejected"
-                        Log.w(TAG, lastError, e)
+                        failCapture("Capture worker rejected", e)
                     }
                 }
                 override fun onFailure(errorCode: Int) {
-                    captureBusy.set(false)
-                    lastError = "Screenshot failed: $errorCode"
-                    Log.w(TAG, lastError)
+                    failCapture("Screenshot failed: " + errorCode, null)
                 }
             })
         } catch (t: Throwable) {
-            captureBusy.set(false)
-            lastError = "Screenshot request failed"
-            Log.w(TAG, lastError, t)
+            failCapture("Screenshot request failed", t)
         }
     }
 
     private fun processScreenshot(screenshot: ScreenshotResult, targetPackage: String) {
         var bitmap: Bitmap? = null
+        var hardwareBitmap: Bitmap? = null
         try {
             val buffer = screenshot.hardwareBuffer
             try {
-                bitmap = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                hardwareBitmap = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
+                bitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
             } finally {
                 buffer.close()
+                hardwareBitmap?.recycle()
             }
-            val fullBitmap = bitmap ?: return
+            val fullBitmap = bitmap ?: run { failCapture("Could not create bitmap", null); return }
             val probe = buildProbe(fullBitmap)
             if (!forceNextCapture && !changedEnough(probe)) return
             val now = System.currentTimeMillis()
             val saved = StorageHelper.save(this, fullBitmap, now, targetPackage) ?: run {
-                lastError = "Screenshot could not be saved"
-                Log.w(TAG, lastError)
+                failCapture("Screenshot could not be saved", null)
                 return
             }
             try {
-                db.insert(saved.timestamp, targetPackage, saved.reference)
+                val label = appLabel(targetPackage)
+                db.insert(saved.timestamp, targetPackage, label, saved.reference)
                 lastSavedProbe = probe
                 forceNextCapture = false
-                lastCaptureAt = now
-                lastError = ""
+                Prefs.setLastCaptureAt(this, now)
+                Prefs.setLastError(this, "")
             } catch (t: Throwable) {
-                deleteReference(saved.reference)
-                lastError = "Database insert failed; file removed"
-                Log.w(TAG, lastError, t)
+                StorageHelper.delete(this, saved.reference)
+                failCapture("Database insert failed; file removed", t)
             }
             enforceRetention()
         } finally {
             bitmap?.recycle()
             captureBusy.set(false)
         }
+    }
+
+    private fun appLabel(pkg: String): String = runCatching {
+        val info = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationLabel(info).toString()
+    }.getOrElse { pkg.substringAfterLast(".").replaceFirstChar { it.uppercase() } }
+
+    private fun isExcluded(pkg: String): Boolean {
+        if (Prefs.excluded(this).contains(pkg)) return true
+        val text = (pkg + " " + appLabel(pkg)).lowercase()
+        return listOf("bank", "banking", "upi", "wallet", "authenticator", "otp", "password", "passkey", "vault", "payments", "payment").any(text::contains)
+    }
+
+    private fun failCapture(message: String, error: Throwable?) {
+        captureBusy.set(false)
+        Prefs.setLastError(this, message)
+        Log.w(TAG, message, error)
     }
 
     private fun buildProbe(bitmap: Bitmap): IntArray {
@@ -176,19 +216,12 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         val days = Prefs.retentionDays(this)
         if (days <= 0) return
         val cutoff = System.currentTimeMillis() - days * 86_400_000L
-        db.cleanupOlderThan(cutoff).forEach(::deleteReference)
-    }
-
-    private fun deleteReference(reference: String) {
-        runCatching {
-            if (reference.startsWith("content://")) contentResolver.delete(android.net.Uri.parse(reference), null, null)
-            else java.io.File(reference).delete()
-        }.onFailure { Log.w(TAG, "Failed to delete $reference", it) }
+        db.cleanupOlderThan(cutoff).forEach { StorageHelper.delete(this, it) }
     }
 
     private fun isScreenUsable() = powerManager.isInteractive && !keyguardManager.isKeyguardLocked
 
-    override fun onUnbind(intent: android.content.Intent?): Boolean {
+    override fun onUnbind(intent: Intent?): Boolean {
         handler.removeCallbacksAndMessages(null)
         return super.onUnbind(intent)
     }
