@@ -1,8 +1,8 @@
 name: Build APK
 
 concurrency:
-  group: emrecall-main-build
-  cancel-in-progress: true
+  group: emrecall-main-build-${{ github.run_id }}
+  cancel-in-progress: false
 
 on:
   push:
