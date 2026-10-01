@@ -2,43 +2,45 @@ package com.emreh.snapmemory
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
-import android.view.View
 import android.view.WindowInsets
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.google.android.material.switchmaterial.SwitchMaterial
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
-    private lateinit var db: MemoryDb
-    private lateinit var timeline: LinearLayout
+    private val db get() = MemoryDb.get(this)
+    private lateinit var timeline: RecyclerView
+    private lateinit var adapter: TimelineAdapter
     private lateinit var search: EditText
-    private lateinit var scrollView: ScrollView
     private lateinit var scrubber: TimelineScrubberView
     private lateinit var status: TextView
-    private lateinit var folderStatus: TextView
     private var allMode = true
     private val folderPicker = 4107
+    private val io = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         configureSystemBars()
-        db = MemoryDb(this)
         buildUi()
+        if (Prefs.appLock(this)) showBiometricGate()
     }
 
     override fun onResume() {
@@ -46,9 +48,32 @@ class MainActivity : Activity() {
         if (::timeline.isInitialized) renderTimeline()
     }
 
+    override fun onDestroy() {
+        io.shutdownNow()
+        super.onDestroy()
+    }
+
+    private fun showBiometricGate() {
+        val prompt = BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    finish()
+                }
+            }
+        )
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock EmRecall")
+            .setSubtitle("Authenticate to view your captured screen history")
+            .setNegativeButtonText("Close")
+            .build()
+        prompt.authenticate(info)
+    }
+
     private fun configureSystemBars() {
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
             val bars = insets.getInsets(
                 WindowInsets.Type.statusBars() or
@@ -58,24 +83,13 @@ class MainActivity : Activity() {
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            window.insetsController?.setSystemBarsAppearance(
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
-        }
     }
 
     private fun buildUi() {
         val root = FrameLayout(this).apply {
             setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface))
         }
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(content, FrameLayout.LayoutParams(-1, -1))
 
         val toolbar = LinearLayout(this).apply {
@@ -101,7 +115,7 @@ class MainActivity : Activity() {
             setPadding(16.dp(), 0, 16.dp(), 8.dp())
         }
         search = EditText(this).apply {
-            hint = "Search your memories"
+            hint = "Search memories"
             setSingleLine(true)
             setPadding(18.dp(), 0, 18.dp(), 0)
         }
@@ -115,6 +129,7 @@ class MainActivity : Activity() {
 
         val filters = ChipGroup(this).apply {
             isSingleSelection = true
+            isSelectionRequired = true
             setPadding(16.dp(), 0, 16.dp(), 8.dp())
         }
         filters.addView(chip("All memories", true) {
@@ -123,35 +138,56 @@ class MainActivity : Activity() {
         })
         filters.addView(chip("Today", false) {
             allMode = false
-            renderTimeline(todayOnly = true)
+            renderTimeline(true)
         })
         content.addView(filters)
 
-        val timelineFrame = FrameLayout(this)
-        scrollView = ScrollView(this).apply {
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
+        val frame = FrameLayout(this)
+        timeline = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
             clipToPadding = false
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(16.dp(), 8.dp(), 40.dp(), 40.dp())
-                timeline = this
+            setPadding(16.dp(), 48.dp(), 44.dp(), 40.dp())
+            isVerticalScrollBarEnabled = false
+            adapter = TimelineAdapter(
+                this@MainActivity,
+                onClick = { row ->
+                    startActivity(
+                        Intent(this@MainActivity, PreviewActivity::class.java)
+                            .putExtra("path", row.path)
+                    )
+                },
+                onLongClick = { row ->
+                    deleteOne(row)
+                    true
+                }
+            ).also { adapter = it }
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                    updateScrubber()
+                }
             })
-            setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                updateScrubber()
-            }
         }
-        timelineFrame.addView(scrollView, FrameLayout.LayoutParams(-1, -1))
+        frame.addView(timeline, FrameLayout.LayoutParams(-1, -1))
+
+        status = TextView(this).apply {
+            textSize = 13f
+            alpha = 0.72f
+            setPadding(16.dp(), 2.dp(), 16.dp(), 8.dp())
+        }
+        frame.addView(status, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         scrubber = TimelineScrubberView(this).apply {
             setOnPositionChanged { fraction ->
-                val range = maxScrollRange()
-                if (range > 0) {
-                    scrollView.scrollTo(0, (range * fraction).toInt())
+                if (adapter.itemCount > 0) {
+                    (timeline.layoutManager as LinearLayoutManager)
+                        .scrollToPositionWithOffset(
+                            (fraction * (adapter.itemCount - 1)).toInt(),
+                            0
+                        )
                 }
             }
         }
-        timelineFrame.addView(
+        frame.addView(
             scrubber,
             FrameLayout.LayoutParams(38.dp(), -1, Gravity.END).apply {
                 topMargin = 8.dp()
@@ -159,146 +195,39 @@ class MainActivity : Activity() {
                 rightMargin = 2.dp()
             }
         )
-        content.addView(timelineFrame, LinearLayout.LayoutParams(-1, 0, 1f))
-
+        content.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
         root.requestApplyInsets()
         renderTimeline()
     }
 
-    private fun maxScrollRange(): Int {
-        if (!::scrollView.isInitialized) return 0
-        val child = scrollView.getChildAt(0) ?: return 0
-        return maxOf(0, child.height - scrollView.height)
+    private fun renderTimeline(todayOnly: Boolean = !allMode) {
+        val query = search.text?.toString()?.trim().orEmpty()
+        io.execute {
+            val start = if (todayOnly) {
+                java.time.LocalDate.now()
+                    .atStartOfDay(java.time.ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+            } else null
+            val rows = db.search(query, 300, start)
+            val total = if (todayOnly || query.isNotBlank()) db.count() else rows.size.toLong()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                adapter.submit(rows)
+                status.text = rows.size.toString() + " shown • " +
+                    total + " stored • " +
+                    if (Prefs.enabled(this)) "capture on" else "capture paused"
+                updateScrubber()
+            }
+        }
     }
 
     private fun updateScrubber() {
-        if (!::scrollView.isInitialized || !::scrubber.isInitialized) return
-        scrollView.post {
-            val range = maxScrollRange()
-            val fraction = if (range > 0) scrollView.scrollY.toFloat() / range else 0f
-            scrubber.setProgress(fraction)
-        }
-    }
-
-    private fun renderTimeline(todayOnly: Boolean = !allMode) {
-        if (!::timeline.isInitialized) return
-        timeline.removeAllViews()
-        val query = search.text?.toString()?.trim().orEmpty()
-        var rows = db.search(query)
-        if (todayOnly) {
-            val start = java.time.LocalDate.now()
-                .atStartOfDay(java.time.ZoneId.systemDefault())
-                .toInstant().toEpochMilli()
-            rows = rows.filter { it.capturedAt >= start }
-        }
-
-        val hero = MaterialCardView(this).apply {
-            radius = 28f
-            cardElevation = 0f
-            setStrokeWidth(1)
-            setContentPadding(20.dp(), 18.dp(), 20.dp(), 18.dp())
-        }
-        val heroBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        heroBody.addView(TextView(this@MainActivity).apply {
-            text = if (rows.isEmpty()) "Your memory timeline" else rows.size.toString() + " moments in your timeline"
-            textSize = 20f
-            setTypeface(null, Typeface.BOLD)
-        })
-        status = TextView(this).apply {
-            text = "Screenshots are kept until you delete them."
-            textSize = 13f
-            alpha = 0.72f
-            setPadding(0, 6.dp(), 0, 0)
-        }
-        heroBody.addView(status)
-        hero.addView(heroBody)
-        timeline.addView(hero, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 18.dp() })
-
-        if (rows.isEmpty()) {
-            timeline.addView(TextView(this).apply {
-                text = "Nothing here yet. Enable EmRecall in Accessibility settings, then use your phone normally."
-                textSize = 16f
-                alpha = 0.72f
-                setPadding(8.dp(), 32.dp(), 8.dp(), 32.dp())
-            })
-            updateScrubber()
-            return
-        }
-
-        val dayFormat = SimpleDateFormat("EEEE, d MMMM", Locale.getDefault())
-        val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-        var lastDay = ""
-        rows.forEach { row ->
-            val day = dayFormat.format(Date(row.capturedAt))
-            if (day != lastDay) {
-                timeline.addView(TextView(this).apply {
-                    text = if (isToday(row.capturedAt)) "Today" else day
-                    textSize = 18f
-                    setTypeface(null, Typeface.BOLD)
-                    setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
-                })
-                lastDay = day
-            }
-            addTimelineRow(row, timeFormat.format(Date(row.capturedAt)))
-        }
-        timeline.post { updateScrubber() }
-    }
-
-    private fun addTimelineRow(row: MemoryDb.Row, time: String) {
-        val line = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.TOP
-        }
-        val rail = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(0, 10.dp(), 10.dp(), 0)
-        }
-        rail.addView(TextView(this@MainActivity).apply {
-            text = time
-            textSize = 12f
-            alpha = 0.7f
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(56.dp(), -2))
-        rail.addView(TextView(this@MainActivity).apply {
-            text = "●"
-            textSize = 15f
-            gravity = Gravity.CENTER
-            setPadding(0, 5.dp(), 0, 0)
-        }, LinearLayout.LayoutParams(56.dp(), -2))
-        line.addView(rail)
-
-        val card = MaterialCardView(this).apply {
-            radius = 22f
-            cardElevation = 1f
-            setStrokeWidth(1)
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, PreviewActivity::class.java).putExtra("path", row.path))
-            }
-        }
-        val body = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
-        body.addView(ImageView(this@MainActivity).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setImageBitmap(StorageHelper.open(this@MainActivity, row.path))
-            minimumHeight = 150.dp()
-            contentDescription = "Screenshot captured at " + time
-        }, LinearLayout.LayoutParams(-1, 165.dp()))
-        body.addView(TextView(this@MainActivity).apply {
-            text = appLabel(row.packageName)
-            textSize = 14f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(14.dp(), 12.dp(), 14.dp(), 2.dp())
-        })
-        body.addView(TextView(this@MainActivity).apply {
-            text = if (row.ocrText.isNotBlank()) row.ocrText.replace("\n", " ").take(100) else "Tap to inspect this moment"
-            textSize = 12f
-            alpha = 0.7f
-            setPadding(14.dp(), 3.dp(), 14.dp(), 12.dp())
-        })
-        card.addView(body)
-        line.addView(card, LinearLayout.LayoutParams(0, -2, 1f).apply { bottomMargin = 12.dp() })
-        timeline.addView(line)
+        if (!::scrubber.isInitialized || adapter.itemCount == 0) return
+        val lm = timeline.layoutManager as LinearLayoutManager
+        val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
+        scrubber.setProgress(first.toFloat() / (adapter.itemCount - 1).coerceAtLeast(1))
     }
 
     private fun showSettings() {
@@ -307,46 +236,53 @@ class MainActivity : Activity() {
             setPadding(24.dp(), 18.dp(), 24.dp(), 24.dp())
         }
         panel.addView(TextView(this).apply {
-            text = "Capture & storage"
+            text = "Capture & privacy"
             textSize = 24f
             setTypeface(null, Typeface.BOLD)
         })
         panel.addView(TextView(this).apply {
-            text = "Your screenshots are kept permanently. EmRecall never auto-deletes them."
+            text = "Long-press a timeline item to delete it. Default storage is private to EmRecall."
             textSize = 14f
             alpha = 0.72f
             setPadding(0, 8.dp(), 0, 18.dp())
         })
-        panel.addView(MaterialButton(this).apply {
-            text = "Open Accessibility settings"
-            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        panel.addView(SwitchMaterial(this).apply {
+            text = "Capture screenshots"
+            isChecked = Prefs.enabled(this@MainActivity)
+            setOnCheckedChangeListener { _, checked ->
+                Prefs.setEnabled(this@MainActivity, checked)
+                renderTimeline()
+            }
         })
-        folderStatus = TextView(this).apply {
-            text = folderText()
-            textSize = 13f
-            alpha = 0.72f
-            setPadding(0, 4.dp(), 0, 8.dp())
-        }
-        panel.addView(folderStatus)
-        panel.addView(MaterialButton(this).apply {
-            text = "Choose screenshot folder"
-            setOnClickListener { chooseFolder() }
+        panel.addView(SwitchMaterial(this).apply {
+            text = "Lock EmRecall with biometrics"
+            isChecked = Prefs.appLock(this@MainActivity)
+            setOnCheckedChangeListener { _, checked ->
+                Prefs.setAppLock(this@MainActivity, checked)
+            }
         })
-        val excluded = EditText(this).apply {
-            hint = "Excluded package names"
-            setSingleLine(false)
-            setText(Prefs.excluded(this@MainActivity).joinToString(", "))
-        }
-        panel.addView(excluded)
         panel.addView(MaterialButton(this).apply {
-            text = "Save exclusions"
+            text = "Run OCR on pending screenshots"
             setOnClickListener {
-                Prefs.setExcluded(
-                    this@MainActivity,
-                    excluded.text.toString().split(',', '\n', ' ', '\t')
-                        .map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+                OcrIndexer(this@MainActivity, db).indexPending(
+                    onProgress = { done, total ->
+                        status.text = if (total == 0) "OCR: nothing pending" else "OCR: " + done + " / " + total
+                    },
+                    onDone = { renderTimeline() }
                 )
-                Toast.makeText(this@MainActivity, "Exclusions saved", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "OCR started", Toast.LENGTH_SHORT).show()
+            }
+        })
+        panel.addView(MaterialButton(this).apply {
+            text = "Retention: " + Prefs.retentionDays(this@MainActivity) + " days"
+            setOnClickListener {
+                val next = when (Prefs.retentionDays(this@MainActivity)) {
+                    7 -> 30
+                    30 -> 90
+                    else -> 7
+                }
+                Prefs.setRetentionDays(this@MainActivity, next)
+                text = "Retention: " + next + " days"
             }
         })
         panel.addView(MaterialButton(this).apply {
@@ -363,19 +299,83 @@ class MainActivity : Activity() {
                 text = "Capture interval: " + next + " seconds"
             }
         })
+        panel.addView(MaterialButton(this).apply {
+            text = "Open Accessibility settings"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        })
+        val excluded = EditText(this).apply {
+            hint = "Additional excluded package names"
+            setSingleLine(false)
+            setText(Prefs.excluded(this@MainActivity).joinToString(", "))
+        }
+        panel.addView(excluded)
+        panel.addView(MaterialButton(this).apply {
+            text = "Save exclusions"
+            setOnClickListener {
+                Prefs.setExcluded(
+                    this@MainActivity,
+                    excluded.text.toString()
+                        .split(',', '\n', ' ', '\t')
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .toSet()
+                )
+                Toast.makeText(this@MainActivity, "Exclusions saved", Toast.LENGTH_SHORT).show()
+            }
+        })
+        panel.addView(MaterialButton(this).apply {
+            text = "Choose screenshot folder"
+            setOnClickListener { chooseFolder() }
+        })
+        panel.addView(MaterialButton(this).apply {
+            text = "Clear all stored memories"
+            setOnClickListener {
+                io.execute {
+                    val paths = db.clear()
+                    paths.forEach(::deleteReference)
+                    runOnUiThread {
+                        adapter.submit(emptyList())
+                        Toast.makeText(this@MainActivity, "All memories deleted", Toast.LENGTH_SHORT).show()
+                        renderTimeline()
+                    }
+                }
+            }
+        })
         val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
         dialog.setContentView(panel)
         dialog.show()
     }
 
+    private fun deleteOne(row: MemoryDb.Row) {
+        io.execute {
+            val path = db.delete(row.id)
+            if (path != null) deleteReference(path)
+            runOnUiThread {
+                Toast.makeText(this, "Memory deleted", Toast.LENGTH_SHORT).show()
+                renderTimeline()
+            }
+        }
+    }
+
+    private fun deleteReference(reference: String) = runCatching {
+        if (reference.startsWith("content://")) {
+            contentResolver.delete(android.net.Uri.parse(reference), null, null)
+        } else {
+            java.io.File(reference).delete()
+        }
+    }
+
     private fun chooseFolder() {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-            )
-        }, folderPicker)
+        startActivityForResult(
+            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                )
+            },
+            folderPicker
+        )
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -387,38 +387,23 @@ class MainActivity : Activity() {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
                 Prefs.setFolderUri(this, it.toString())
-                if (::folderStatus.isInitialized) folderStatus.text = folderText()
                 Toast.makeText(this, "Screenshot folder selected", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun folderText(): String =
-        if (Prefs.folderUri(this) != null) {
-            "Saving to your selected folder, organized by date."
-        } else {
-            "No folder selected. Screenshots use EmRecall's private storage."
+    private fun chip(text: String, checked: Boolean, action: () -> Unit) =
+        Chip(this).apply {
+            this.text = text
+            isCheckable = true
+            isChecked = checked
+            setOnClickListener { action() }
         }
-
-    private fun chip(text: String, checked: Boolean, action: () -> Unit) = Chip(this).apply {
-        this.text = text
-        isCheckable = true
-        isChecked = checked
-        setOnClickListener { action() }
-    }
-
-    private fun appLabel(packageName: String): String =
-        packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
-
-    private fun isToday(timestamp: Long): Boolean {
-        val fmt = SimpleDateFormat("yyyyMMdd", Locale.US)
-        return fmt.format(Date(timestamp)) == fmt.format(Date())
-    }
 
     private fun resolveColor(attr: Int): Int {
         val typed = theme.obtainStyledAttributes(intArrayOf(attr))
         return typed.getColor(0, 0).also { typed.recycle() }
     }
 
-    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
+    private fun Int.dp() = (this * resources.displayMetrics.density).toInt()
 }
