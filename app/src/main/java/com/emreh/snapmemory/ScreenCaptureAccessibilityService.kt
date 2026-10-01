@@ -13,6 +13,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import android.view.Display
+import androidx.core.content.ContextCompat
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import java.util.concurrent.Executors
@@ -52,10 +53,15 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         db = MemoryDb.get(this)
-        registerReceiver(screenReceiver, IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_OFF)
-            addAction(Intent.ACTION_SCREEN_ON)
-        })
+        ContextCompat.registerReceiver(
+            this,
+            screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         refreshForegroundPackage()
         handler.removeCallbacks(captureRunnable)
         if (isScreenUsable()) handler.post(captureRunnable)
@@ -69,12 +75,16 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     }
 
     private fun refreshForegroundPackage() {
-        val active = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
-            ?: windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
-            ?: return
-        val pkg = active.root?.packageName?.toString() ?: return
-        if (pkg != foregroundPackage) forceNextCapture = true
-        foregroundPackage = pkg
+        runCatching {
+            val active = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }
+                ?: windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
+                ?: return@runCatching
+            val pkg = active.root?.packageName?.toString() ?: return@runCatching
+            if (pkg != foregroundPackage) forceNextCapture = true
+            foregroundPackage = pkg
+        }.onFailure {
+            Log.w(TAG, "Unable to resolve foreground application window", it)
+        }
     }
 
     override fun onInterrupt() = Unit
