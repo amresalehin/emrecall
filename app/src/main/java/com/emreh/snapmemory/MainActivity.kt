@@ -145,7 +145,7 @@ class MainActivity : Activity() {
 
         scrubber = TimelineScrubberView(this).apply {
             setOnPositionChanged { fraction ->
-                val range = scrollView.computeVerticalScrollRange() - scrollView.height
+                val range = maxScrollRange()
                 if (range > 0) {
                     scrollView.scrollTo(0, (range * fraction).toInt())
                 }
@@ -166,10 +166,16 @@ class MainActivity : Activity() {
         renderTimeline()
     }
 
+    private fun maxScrollRange(): Int {
+        if (!::scrollView.isInitialized) return 0
+        val child = scrollView.getChildAt(0) ?: return 0
+        return maxOf(0, child.height - scrollView.height)
+    }
+
     private fun updateScrubber() {
         if (!::scrollView.isInitialized || !::scrubber.isInitialized) return
         scrollView.post {
-            val range = scrollView.computeVerticalScrollRange() - scrollView.height
+            val range = maxScrollRange()
             val fraction = if (range > 0) scrollView.scrollY.toFloat() / range else 0f
             scrubber.setProgress(fraction)
         }
