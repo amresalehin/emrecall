@@ -6,7 +6,10 @@ import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -24,6 +27,8 @@ class MainActivity : Activity() {
     private lateinit var db: MemoryDb
     private lateinit var timeline: LinearLayout
     private lateinit var search: EditText
+    private lateinit var scrollView: ScrollView
+    private lateinit var scrubber: TimelineScrubberView
     private lateinit var status: TextView
     private lateinit var folderStatus: TextView
     private var allMode = true
@@ -31,6 +36,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureSystemBars()
         db = MemoryDb(this)
         buildUi()
     }
@@ -40,16 +46,42 @@ class MainActivity : Activity() {
         if (::timeline.isInitialized) renderTimeline()
     }
 
+    private fun configureSystemBars() {
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+            val bars = insets.getInsets(
+                WindowInsets.Type.statusBars() or
+                    WindowInsets.Type.navigationBars() or
+                    WindowInsets.Type.displayCutout()
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.setSystemBarsAppearance(
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            )
+        }
+    }
+
     private fun buildUi() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val root = FrameLayout(this).apply {
             setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface))
         }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        root.addView(content, FrameLayout.LayoutParams(-1, -1))
 
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(20, 18, 12, 12)
+            setPadding(20.dp(), 12.dp(), 12.dp(), 10.dp())
         }
         toolbar.addView(TextView(this).apply {
             text = "EmRecall"
@@ -58,46 +90,89 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, -2, 1f))
         toolbar.addView(MaterialButton(this).apply {
             text = "Settings"
+            minHeight = 48.dp()
             setOnClickListener { showSettings() }
         })
-        root.addView(toolbar)
+        content.addView(toolbar)
 
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(16, 0, 16, 8)
+            setPadding(16.dp(), 0, 16.dp(), 8.dp())
         }
         search = EditText(this).apply {
             hint = "Search your memories"
             setSingleLine(true)
-            setPadding(18, 0, 18, 0)
+            setPadding(18.dp(), 0, 18.dp(), 0)
         }
         searchRow.addView(search, LinearLayout.LayoutParams(0, 54.dp(), 1f))
         searchRow.addView(MaterialButton(this).apply {
             text = "Search"
+            minHeight = 48.dp()
             setOnClickListener { renderTimeline() }
         })
-        root.addView(searchRow)
+        content.addView(searchRow)
 
         val filters = ChipGroup(this).apply {
             isSingleSelection = true
-            setPadding(16, 0, 16, 8)
+            setPadding(16.dp(), 0, 16.dp(), 8.dp())
         }
-        filters.addView(chip("All memories", true) { allMode = true; renderTimeline() })
-        filters.addView(chip("Today", false) { allMode = false; renderTimeline(todayOnly = true) })
-        root.addView(filters)
+        filters.addView(chip("All memories", true) {
+            allMode = true
+            renderTimeline()
+        })
+        filters.addView(chip("Today", false) {
+            allMode = false
+            renderTimeline(todayOnly = true)
+        })
+        content.addView(filters)
 
-        val scroll = ScrollView(this).apply {
+        val timelineFrame = FrameLayout(this)
+        scrollView = ScrollView(this).apply {
             isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            clipToPadding = false
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(16, 8, 16, 32)
+                setPadding(16.dp(), 8.dp(), 40.dp(), 40.dp())
                 timeline = this
             })
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                updateScrubber()
+            }
         }
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        timelineFrame.addView(scrollView, FrameLayout.LayoutParams(-1, -1))
+
+        scrubber = TimelineScrubberView(this).apply {
+            setOnPositionChanged { fraction ->
+                val range = scrollView.computeVerticalScrollRange() - scrollView.height
+                if (range > 0) {
+                    scrollView.scrollTo(0, (range * fraction).toInt())
+                }
+            }
+        }
+        timelineFrame.addView(
+            scrubber,
+            FrameLayout.LayoutParams(38.dp(), -1, Gravity.END).apply {
+                topMargin = 8.dp()
+                bottomMargin = 12.dp()
+                rightMargin = 2.dp()
+            }
+        )
+        content.addView(timelineFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+
         setContentView(root)
+        root.requestApplyInsets()
         renderTimeline()
+    }
+
+    private fun updateScrubber() {
+        if (!::scrollView.isInitialized || !::scrubber.isInitialized) return
+        scrollView.post {
+            val range = scrollView.computeVerticalScrollRange() - scrollView.height
+            val fraction = if (range > 0) scrollView.scrollY.toFloat() / range else 0f
+            scrubber.setProgress(fraction)
+        }
     }
 
     private fun renderTimeline(todayOnly: Boolean = !allMode) {
@@ -106,7 +181,9 @@ class MainActivity : Activity() {
         val query = search.text?.toString()?.trim().orEmpty()
         var rows = db.search(query)
         if (todayOnly) {
-            val start = java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val start = java.time.LocalDate.now()
+                .atStartOfDay(java.time.ZoneId.systemDefault())
+                .toInstant().toEpochMilli()
             rows = rows.filter { it.capturedAt >= start }
         }
 
@@ -114,7 +191,7 @@ class MainActivity : Activity() {
             radius = 28f
             cardElevation = 0f
             setStrokeWidth(1)
-            setContentPadding(20, 18, 20, 18)
+            setContentPadding(20.dp(), 18.dp(), 20.dp(), 18.dp())
         }
         val heroBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         heroBody.addView(TextView(this@MainActivity).apply {
@@ -126,7 +203,7 @@ class MainActivity : Activity() {
             text = "Screenshots are kept until you delete them."
             textSize = 13f
             alpha = 0.72f
-            setPadding(0, 6, 0, 0)
+            setPadding(0, 6.dp(), 0, 0)
         }
         heroBody.addView(status)
         hero.addView(heroBody)
@@ -137,8 +214,9 @@ class MainActivity : Activity() {
                 text = "Nothing here yet. Enable EmRecall in Accessibility settings, then use your phone normally."
                 textSize = 16f
                 alpha = 0.72f
-                setPadding(8, 32, 8, 32)
+                setPadding(8.dp(), 32.dp(), 8.dp(), 32.dp())
             })
+            updateScrubber()
             return
         }
 
@@ -152,12 +230,13 @@ class MainActivity : Activity() {
                     text = if (isToday(row.capturedAt)) "Today" else day
                     textSize = 18f
                     setTypeface(null, Typeface.BOLD)
-                    setPadding(8, 12, 8, 12)
+                    setPadding(8.dp(), 12.dp(), 8.dp(), 12.dp())
                 })
                 lastDay = day
             }
             addTimelineRow(row, timeFormat.format(Date(row.capturedAt)))
         }
+        timeline.post { updateScrubber() }
     }
 
     private fun addTimelineRow(row: MemoryDb.Row, time: String) {
@@ -168,7 +247,7 @@ class MainActivity : Activity() {
         val rail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            setPadding(0, 10, 10, 0)
+            setPadding(0, 10.dp(), 10.dp(), 0)
         }
         rail.addView(TextView(this@MainActivity).apply {
             text = time
@@ -180,7 +259,7 @@ class MainActivity : Activity() {
             text = "●"
             textSize = 15f
             gravity = Gravity.CENTER
-            setPadding(0, 5, 0, 0)
+            setPadding(0, 5.dp(), 0, 0)
         }, LinearLayout.LayoutParams(56.dp(), -2))
         line.addView(rail)
 
@@ -203,13 +282,13 @@ class MainActivity : Activity() {
             text = appLabel(row.packageName)
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
-            setPadding(14, 12, 14, 2)
+            setPadding(14.dp(), 12.dp(), 14.dp(), 2.dp())
         })
         body.addView(TextView(this@MainActivity).apply {
             text = if (row.ocrText.isNotBlank()) row.ocrText.replace("\n", " ").take(100) else "Tap to inspect this moment"
             textSize = 12f
             alpha = 0.7f
-            setPadding(14, 3, 14, 12)
+            setPadding(14.dp(), 3.dp(), 14.dp(), 12.dp())
         })
         card.addView(body)
         line.addView(card, LinearLayout.LayoutParams(0, -2, 1f).apply { bottomMargin = 12.dp() })
@@ -219,7 +298,7 @@ class MainActivity : Activity() {
     private fun showSettings() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 18, 24, 24)
+            setPadding(24.dp(), 18.dp(), 24.dp(), 24.dp())
         }
         panel.addView(TextView(this).apply {
             text = "Capture & storage"
@@ -230,7 +309,7 @@ class MainActivity : Activity() {
             text = "Your screenshots are kept permanently. EmRecall never auto-deletes them."
             textSize = 14f
             alpha = 0.72f
-            setPadding(0, 8, 0, 18)
+            setPadding(0, 8.dp(), 0, 18.dp())
         })
         panel.addView(MaterialButton(this).apply {
             text = "Open Accessibility settings"
@@ -240,7 +319,7 @@ class MainActivity : Activity() {
             text = folderText()
             textSize = 13f
             alpha = 0.72f
-            setPadding(0, 4, 0, 8)
+            setPadding(0, 4.dp(), 0, 8.dp())
         }
         panel.addView(folderStatus)
         panel.addView(MaterialButton(this).apply {
@@ -256,14 +335,24 @@ class MainActivity : Activity() {
         panel.addView(MaterialButton(this).apply {
             text = "Save exclusions"
             setOnClickListener {
-                Prefs.setExcluded(this@MainActivity, excluded.text.toString().split(',', '\n', ' ', '\t').map { it.trim() }.filter { it.isNotEmpty() }.toSet())
+                Prefs.setExcluded(
+                    this@MainActivity,
+                    excluded.text.toString().split(',', '\n', ' ', '\t')
+                        .map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+                )
                 Toast.makeText(this@MainActivity, "Exclusions saved", Toast.LENGTH_SHORT).show()
             }
         })
         panel.addView(MaterialButton(this).apply {
             text = "Capture interval: " + Prefs.interval(this@MainActivity) + " seconds"
             setOnClickListener {
-                val next = when (Prefs.interval(this@MainActivity)) { 5L -> 7L; 7L -> 10L; 10L -> 15L; 15L -> 20L; else -> 5L }
+                val next = when (Prefs.interval(this@MainActivity)) {
+                    5L -> 7L
+                    7L -> 10L
+                    10L -> 15L
+                    15L -> 20L
+                    else -> 5L
+                }
                 Prefs.setInterval(this@MainActivity, next)
                 text = "Capture interval: " + next + " seconds"
             }
@@ -275,7 +364,11 @@ class MainActivity : Activity() {
 
     private fun chooseFolder() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
         }, folderPicker)
     }
 
@@ -283,7 +376,10 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == folderPicker && resultCode == RESULT_OK) {
             data?.data?.let {
-                contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                contentResolver.takePersistableUriPermission(
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
                 Prefs.setFolderUri(this, it.toString())
                 if (::folderStatus.isInitialized) folderStatus.text = folderText()
                 Toast.makeText(this, "Screenshot folder selected", Toast.LENGTH_SHORT).show()
@@ -291,7 +387,12 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun folderText(): String = if (Prefs.folderUri(this) != null) "Saving to your selected folder, organized by date." else "No folder selected. Screenshots use EmRecall's private storage."
+    private fun folderText(): String =
+        if (Prefs.folderUri(this) != null) {
+            "Saving to your selected folder, organized by date."
+        } else {
+            "No folder selected. Screenshots use EmRecall's private storage."
+        }
 
     private fun chip(text: String, checked: Boolean, action: () -> Unit) = Chip(this).apply {
         this.text = text
@@ -300,7 +401,8 @@ class MainActivity : Activity() {
         setOnClickListener { action() }
     }
 
-    private fun appLabel(packageName: String): String = packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
+    private fun appLabel(packageName: String): String =
+        packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
 
     private fun isToday(timestamp: Long): Boolean {
         val fmt = SimpleDateFormat("yyyyMMdd", Locale.US)
