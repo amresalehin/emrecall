@@ -136,6 +136,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     private fun processScreenshot(screenshot: ScreenshotResult, targetPackage: String) {
         var bitmap: Bitmap? = null
         var hardwareBitmap: Bitmap? = null
+        var probe = IntArray(0)
         try {
             val buffer = screenshot.hardwareBuffer
             try {
@@ -147,7 +148,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
 
                 // The change detector operates directly on the hardware-backed bitmap.
                 // Only changed candidates are copied into a CPU bitmap for encoding.
-                val probe = buildProbe(fullBitmap)
+                probe = buildProbe(fullBitmap)
                 if (!changeDetector.shouldCapture(probe, forceNextCapture)) {
                     backoffCapture()
                     return
