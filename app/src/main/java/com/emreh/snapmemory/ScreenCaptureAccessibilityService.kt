@@ -280,6 +280,8 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         ).any(text::contains)
     }
 
+    private fun isScreenUsable() = powerManager.isInteractive && !keyguardManager.isKeyguardLocked
+
     private fun appLabel(pkg: String): String = runCatching {
         val info = packageManager.getApplicationInfo(pkg, 0)
         packageManager.getApplicationLabel(info).toString()
