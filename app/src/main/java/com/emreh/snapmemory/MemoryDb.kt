@@ -187,9 +187,12 @@ class MemoryDb private constructor(context: Context) :
         ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
     }
 
-    fun allReferences(): List<Reference> {
-        val out = ArrayList<Reference>()
-        readableDatabase.rawQuery("SELECT id,path FROM snapshots", null).use { c ->
+    fun referencesBatch(afterId: Long = 0L, limit: Int = 250): List<Reference> {
+        val out = ArrayList<Reference>(limit)
+        readableDatabase.rawQuery(
+            "SELECT id,path FROM snapshots WHERE id>? ORDER BY id ASC LIMIT ?",
+            arrayOf(afterId.toString(), limit.toString())
+        ).use { c ->
             while (c.moveToNext()) out += Reference(c.getLong(0), c.getString(1))
         }
         return out
