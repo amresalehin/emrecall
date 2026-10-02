@@ -1,12 +1,12 @@
 name: Build APK
 
 concurrency:
-  group: emrecall-main-build-${{ github.run_id }}
+  group: emrecall-build-${{ github.ref }}
   cancel-in-progress: false
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, claude-emrecall ]
   workflow_dispatch:
 
 permissions:
