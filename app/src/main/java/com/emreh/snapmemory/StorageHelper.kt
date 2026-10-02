@@ -57,6 +57,30 @@ object StorageHelper {
         }.onFailure { Log.w(TAG, "SAF save failed", it) }.getOrNull()
     }
 
+    private fun saveToPrivateStorage(context: Context, bitmap: Bitmap, timestamp: Long, packageName: String): Saved? {
+        val day = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(java.util.Date(timestamp))
+        val dir = File(context.filesDir, "screenshots/" + day)
+        if (!dir.exists() && !dir.mkdirs()) {
+            Log.w(TAG, "Unable to create " + dir)
+            return null
+        }
+        val safePackage = packageName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(48)
+        val file = File(dir, timestamp.toString() + "_" + safePackage + ".webp")
+        return try {
+            FileOutputStream(file).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, QUALITY, out)) {
+                    file.delete()
+                    return null
+                }
+            }
+            Saved(timestamp, PRIVATE_PREFIX + day + "/" + file.name)
+        } catch (t: Throwable) {
+            file.delete()
+            Log.w(TAG, "Private save failed", t)
+            null
+        }
+    }
+
     private fun getCachedTree(context: Context, uriText: String): DocumentFile? {
         if (cachedTreeUri != uriText) synchronized(this) {
             if (cachedTreeUri != uriText) { cachedTreeUri = uriText; cachedDay = null; cachedDayDir = null }
