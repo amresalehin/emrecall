@@ -64,8 +64,10 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (::timeline.isInitialized) renderTimeline()
-        maintainStorage()
+        if (::timeline.isInitialized) {
+            renderTimeline()
+            maintainStorage()
+        }
     }
 
     override fun onDestroy() {
@@ -205,8 +207,14 @@ class MainActivity : FragmentActivity() {
                     if (timelineOldest > 0L && timelineNewest > timelineOldest) {
                         val targetTime = timelineNewest - ((timelineNewest - timelineOldest) * fraction).toLong()
                         io.execute {
-                            val position = db.search(currentQuery, 300, if (currentTodayOnly) java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() else null)
-                                .indexOfFirst { it.capturedAt <= targetTime }
+                            val position = db.search(
+                        currentQuery,
+                        300,
+                        if (currentTodayOnly) {
+                            java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault())
+                                .toInstant().toEpochMilli()
+                        } else null
+                    ).indexOfFirst { it.capturedAt <= targetTime }
                             val safePosition = if (position >= 0) position else adapter.itemCount - 1
                             runOnUiThread {
                                 if (!isFinishing && !isDestroyed) {
@@ -237,7 +245,9 @@ class MainActivity : FragmentActivity() {
 
     private fun renderTimeline(todayOnly: Boolean = !allMode) {
         val query = search.text?.toString()?.trim().orEmpty()
+        if (!::timeline.isInitialized || isFinishing || isDestroyed) return
         io.execute {
+            if (isFinishing || isDestroyed) return@execute
             val start = if (todayOnly) {
                 java.time.LocalDate.now()
                     .atStartOfDay(java.time.ZoneId.systemDefault())
