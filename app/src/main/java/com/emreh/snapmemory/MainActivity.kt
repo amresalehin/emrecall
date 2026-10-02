@@ -422,11 +422,19 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun maintainStorageNow() {
-        db.labelsNeedingBackfill().forEach { row ->
+        db.labelsNeedingBackfill().take(LABEL_BACKFILL_BATCH).forEach { row ->
             db.updateAppLabel(row.id, resolveAppLabel(row.packageName))
         }
-        db.allReferences().forEach { ref ->
-            if (!StorageHelper.exists(this, ref.path)) db.delete(ref.id)
+
+        var cursor = 0L
+        while (true) {
+            val batch = db.referencesBatch(cursor, MAINTENANCE_BATCH)
+            if (batch.isEmpty()) break
+            batch.forEach { ref ->
+                if (!StorageHelper.exists(this, ref.path)) db.delete(ref.id)
+                cursor = ref.id
+            }
+            if (batch.size < MAINTENANCE_BATCH) break
         }
         val days = Prefs.retentionDays(this)
         if (days > 0) {
@@ -475,4 +483,9 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun Int.dp() = (this * resources.displayMetrics.density).toInt()
+
+    companion object {
+        private const val MAINTENANCE_BATCH = 250
+        private const val LABEL_BACKFILL_BATCH = 100
+    }
 }
