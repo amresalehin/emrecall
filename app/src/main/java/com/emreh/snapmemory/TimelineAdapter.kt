@@ -9,6 +9,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.DiffUtil
 import com.google.android.material.card.MaterialCardView
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -28,7 +29,19 @@ class TimelineAdapter(
     private var rows: List<MemoryDb.Row> = emptyList()
     private val loadGeneration = java.util.concurrent.atomic.AtomicInteger(0)
 
-    fun submit(newRows: List<MemoryDb.Row>) { loadGeneration.incrementAndGet(); rows = newRows; notifyDataSetChanged() }
+    fun submit(newRows: List<MemoryDb.Row>) {
+        loadGeneration.incrementAndGet()
+        val oldRows = rows
+        rows = newRows
+        DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = oldRows.size
+            override fun getNewListSize() = newRows.size
+            override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                oldRows[oldItemPosition].id == newRows[newItemPosition].id
+            override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                oldRows[oldItemPosition] == newRows[newItemPosition]
+        }).dispatchUpdatesTo(this)
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val root = MaterialCardView(context).apply {
