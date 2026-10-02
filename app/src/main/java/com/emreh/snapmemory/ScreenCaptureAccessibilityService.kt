@@ -27,6 +27,9 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     private lateinit var db: MemoryDb
     @Volatile private var foregroundPackage = "unknown"
     @Volatile private var forceNextCapture = true
+    @Volatile private var nextCaptureDelayMs = DEFAULT_INTERVAL_MS
+    private var lastCapturePrefAt = 0L
+    private var lastErrorPref = ""
     private val changeDetector = ChangeDetector()
     private val powerManager by lazy { getSystemService(PowerManager::class.java) }
     private val keyguardManager by lazy { getSystemService(KeyguardManager::class.java) }
@@ -45,14 +48,17 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
 
     private val captureRunnable = object : Runnable {
         override fun run() {
-            if (Prefs.enabled(this@ScreenCaptureAccessibilityService) && isScreenUsable()) captureOnce()
-            if (isScreenUsable()) handler.postDelayed(this, Prefs.interval(this@ScreenCaptureAccessibilityService) * 1000L)
+            val usable = isScreenUsable()
+            if (usable && Prefs.enabled(this@ScreenCaptureAccessibilityService)) captureOnce()
+            if (usable) handler.postDelayed(this, nextCaptureDelayMs)
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         db = MemoryDb.get(this)
+        lastCapturePrefAt = Prefs.lastCaptureAt(this)
+        lastErrorPref = Prefs.lastError(this)
         ContextCompat.registerReceiver(
             this,
             screenReceiver,
@@ -69,7 +75,8 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             refreshForegroundPackage()
         }
     }
@@ -80,7 +87,10 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
                 ?: windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isFocused }
                 ?: return@runCatching
             val pkg = active.root?.packageName?.toString() ?: return@runCatching
-            if (pkg != foregroundPackage) forceNextCapture = true
+            if (pkg != foregroundPackage) {
+                forceNextCapture = true
+                nextCaptureDelayMs = ACTIVE_INTERVAL_MS
+            }
             foregroundPackage = pkg
         }.onFailure {
             Log.w(TAG, "Unable to resolve foreground application window", it)
@@ -91,6 +101,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        flushPrefs()
         runCatching { unregisterReceiver(screenReceiver) }
         worker.shutdownNow()
         super.onDestroy()
@@ -112,6 +123,7 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
                         failCapture("Capture worker rejected", e)
                     }
                 }
+
                 override fun onFailure(errorCode: Int) {
                     failCapture("Screenshot failed: " + errorCode, null)
                 }
@@ -128,26 +140,43 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
             val buffer = screenshot.hardwareBuffer
             try {
                 hardwareBitmap = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
-                bitmap = hardwareBitmap?.copy(Bitmap.Config.ARGB_8888, false)
+                val fullBitmap = hardwareBitmap ?: run {
+                    failCapture("Could not create bitmap", null)
+                    return
+                }
+
+                // The change detector operates directly on the hardware-backed bitmap.
+                // Only changed candidates are copied into a CPU bitmap for encoding.
+                val probe = buildProbe(fullBitmap)
+                if (!changeDetector.shouldCapture(probe, forceNextCapture)) {
+                    backoffCapture()
+                    return
+                }
+
+                bitmap = fullBitmap.copy(Bitmap.Config.ARGB_8888, false)
             } finally {
                 buffer.close()
-                hardwareBitmap?.recycle()
             }
-            val fullBitmap = bitmap ?: run { failCapture("Could not create bitmap", null); return }
-            val probe = buildProbe(fullBitmap)
-            if (!changeDetector.shouldCapture(probe, forceNextCapture)) return
+
+            val saveBitmap = bitmap ?: run {
+                failCapture("Could not create CPU bitmap", null)
+                return
+            }
+
             val now = System.currentTimeMillis()
-            val saved = StorageHelper.save(this, fullBitmap, now, targetPackage) ?: run {
+            val saved = StorageHelper.save(this, saveBitmap, now, targetPackage) ?: run {
                 failCapture("Screenshot could not be saved", null)
                 return
             }
+
             try {
                 val label = appLabel(targetPackage)
                 db.insert(saved.timestamp, targetPackage, label, saved.reference)
                 changeDetector.markSaved(probe)
                 forceNextCapture = false
-                Prefs.setLastCaptureAt(this, now)
-                Prefs.setLastError(this, "")
+                backoffCapture(reset = true)
+                setLastCaptureCached(now)
+                clearLastErrorCached()
             } catch (t: Throwable) {
                 StorageHelper.delete(this, saved.reference)
                 failCapture("Database insert failed; file removed", t)
@@ -155,43 +184,28 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
             enforceRetention()
         } finally {
             bitmap?.recycle()
+            hardwareBitmap?.recycle()
             captureBusy.set(false)
         }
     }
 
-    private fun appLabel(pkg: String): String = runCatching {
-        val info = packageManager.getApplicationInfo(pkg, 0)
-        packageManager.getApplicationLabel(info).toString()
-    }.getOrElse { pkg.substringAfterLast(".").replaceFirstChar { it.uppercase() } }
-
-    private fun isExcluded(pkg: String): Boolean {
-        if (Prefs.excluded(this).contains(pkg)) return true
-        val text = (pkg + " " + appLabel(pkg)).lowercase()
-        return listOf("bank", "banking", "upi", "wallet", "authenticator", "otp", "password", "passkey", "vault", "payments", "payment").any(text::contains)
-    }
-
-    private fun failCapture(message: String, error: Throwable?) {
-        captureBusy.set(false)
-        Prefs.setLastError(this, message)
-        Log.w(TAG, message, error)
-    }
-
     private fun buildProbe(bitmap: Bitmap): IntArray {
-        val cols = 60
-        val rows = 34
+        val cols = PROBE_COLS
+        val rows = PROBE_ROWS
         val out = IntArray(cols * rows)
         val xStep = bitmap.width.toFloat() / cols
         val yStep = bitmap.height.toFloat() / rows
+
         for (y in 0 until rows) {
             val y0 = (y * yStep).toInt().coerceIn(0, bitmap.height - 1)
             val y1 = ((y + 1) * yStep).toInt().coerceIn(y0 + 1, bitmap.height)
             for (x in 0 until cols) {
                 val x0 = (x * xStep).toInt().coerceIn(0, bitmap.width - 1)
                 val x1 = ((x + 1) * xStep).toInt().coerceIn(x0 + 1, bitmap.width)
+                val sx = maxOf(1, (x1 - x0) / PROBE_SAMPLES_PER_CELL)
+                val sy = maxOf(1, (y1 - y0) / PROBE_SAMPLES_PER_CELL)
                 var sum = 0L
                 var count = 0
-                val sx = maxOf(1, (x1 - x0) / 8)
-                val sy = maxOf(1, (y1 - y0) / 8)
                 var yy = y0
                 while (yy < y1) {
                     var xx = x0
@@ -209,6 +223,42 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         return out
     }
 
+    private fun backoffCapture(reset: Boolean = false) {
+        nextCaptureDelayMs = if (reset) ACTIVE_INTERVAL_MS else {
+            minOf(MAX_INTERVAL_MS, nextCaptureDelayMs * 2)
+        }
+    }
+
+    private fun setLastCaptureCached(value: Long) {
+        val previous = lastCapturePrefAt
+        lastCapturePrefAt = value
+        if (previous == 0L || value - previous >= PREF_FLUSH_INTERVAL_MS) flushLastCapture()
+    }
+
+    private fun clearLastErrorCached() {
+        if (lastErrorPref.isNotEmpty()) {
+            lastErrorPref = ""
+            Prefs.setLastError(this, "")
+        }
+    }
+
+    private fun failCapture(message: String, error: Throwable?) {
+        captureBusy.set(false)
+        if (message != lastErrorPref) {
+            lastErrorPref = message
+            Prefs.setLastError(this, message)
+        }
+        Log.w(TAG, message, error)
+    }
+
+    private fun flushLastCapture() {
+        if (lastCapturePrefAt != 0L) Prefs.setLastCaptureAt(this, lastCapturePrefAt)
+    }
+
+    private fun flushPrefs() {
+        flushLastCapture()
+    }
+
     private fun enforceRetention() {
         val days = Prefs.retentionDays(this)
         if (days <= 0) return
@@ -220,12 +270,34 @@ class ScreenCaptureAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun isScreenUsable() = powerManager.isInteractive && !keyguardManager.isKeyguardLocked
+    private fun isExcluded(pkg: String): Boolean {
+        if (Prefs.excluded(this).contains(pkg)) return true
+        val text = (pkg + " " + appLabel(pkg)).lowercase()
+        return listOf(
+            "bank", "banking", "upi", "wallet", "authenticator", "otp",
+            "password", "passkey", "vault", "payments", "payment"
+        ).any(text::contains)
+    }
+
+    private fun appLabel(pkg: String): String = runCatching {
+        val info = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationLabel(info).toString()
+    }.getOrElse { pkg.substringAfterLast(".").replaceFirstChar { it.uppercase() } }
 
     override fun onUnbind(intent: Intent?): Boolean {
         handler.removeCallbacksAndMessages(null)
+        flushPrefs()
         return super.onUnbind(intent)
     }
 
-    companion object { private const val TAG = "EmRecall.Capture" }
+    companion object {
+        private const val TAG = "EmRecall.Capture"
+        private const val PROBE_COLS = 30
+        private const val PROBE_ROWS = 18
+        private const val PROBE_SAMPLES_PER_CELL = 4
+        private const val DEFAULT_INTERVAL_MS = 15_000L
+        private const val ACTIVE_INTERVAL_MS = 10_000L
+        private const val MAX_INTERVAL_MS = 30_000L
+        private const val PREF_FLUSH_INTERVAL_MS = 60_000L
+    }
 }
