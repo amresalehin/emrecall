@@ -2,7 +2,7 @@ name: Build APK
 
 concurrency:
   group: emrecall-build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 on:
   push:
